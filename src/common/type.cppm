@@ -2,11 +2,11 @@ module;
 
 #include <cstddef>
 #include <variant>
-#include <vector>
 
 export module type;
 
 import id;
+import move_only_vector;
 
 export namespace type {
 
@@ -30,23 +30,23 @@ struct Element {
 };
 
 struct Union {
-  std::vector<Element> elements;
+  move_only_vector<Element> elements;
 };
 
 struct Struct {
-  std::vector<Element> elements;
+  move_only_vector<Element> elements;
 };
 
 struct Application {
-  id::FormId definition_id;
-  std::vector<id::TypeId> argument_ids;
+  id::TypeId function_id;
+  id::TypeId argument_id;
 };
 
 // Each object represents a unique variable.
 struct Variable {};
 
 struct NamedTypeReference {
-  id::FormId definition_id;
+  id::FormId form_id;
 };
 
 using TypeBase = std::variant<Arrow, ForAll, DeBruijnIndex, Union, Struct, Application, Variable,

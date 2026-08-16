@@ -1,0 +1,23 @@
+form List A
+  = :nil
+  | :cons {
+      head :: A,
+      tail :: List A,
+    }
+
+form Bool = :true | :false
+
+dec prepend :: [A] A -> List A -> List A
+def prepend[_] x xs = :cons {
+  head = x,
+  tail = xs,
+}
+
+dec map :: [A][B] (A -> B) -> List A -> List B
+def map[_][_] f xs = case xs of {
+  :nil -> :nil,
+  :cons { head = y, tail = ys } -> :cons {
+    head = f y,
+    tail = map f ys,
+  }
+}

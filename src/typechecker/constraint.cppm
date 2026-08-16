@@ -11,6 +11,7 @@ export module constraint;
 
 import entity;
 import id;
+import move_only_vector;
 import todo;
 import type;
 import type_storage;
@@ -24,7 +25,7 @@ export struct SubtypeOf {
   // 3. If a <= b and b <= a, then a and b are the same type.
   id::TypeId a_id, b_id;
 
-  bool equal(storage::TypeStorage const &ts, SubtypeOf const &that) {
+  bool equal(type_storage::TypeStorage const &ts, SubtypeOf const &that) {
     return ts.equal(a_id, that.a_id) and ts.equal(b_id, that.b_id);
   }
 
@@ -71,34 +72,28 @@ struct SubtypeOfRule {
       }
     } else if constexpr (std::same_as<A, type::NamedTypeReference> and
                          std::same_as<B, type::NamedTypeReference>) {
-      if (a.definition_id != b.definition_id) {
+      if (a.form_id != b.form_id) {
         todo();
       }
     } else if constexpr (std::same_as<A, type::Application> and
                          std::same_as<B, type::Application>) {
-      if (a.definition_id != b.definition_id) {
+      // FIX: Faulty. What if one of these isn't deduced yet?
+      if (not ts.equal(a.function_id, b.function_id)) {
         todo();
       }
-      for (std::size_t i = 0; i < a.argument_ids.size(); ++i) {
-        constraints.push_back(SubtypeOf{a.argument_ids[i], b.argument_ids[i]});
-      }
+      constraints.push_back(SubtypeOf{a.argument_id, b.argument_id});
     } else if constexpr (std::same_as<B, type::NamedTypeReference>) {
-      constraints.push_back(SubtypeOf{a_id, forms[b.definition_id.value].type});
+      constraints.push_back(SubtypeOf{a_id, forms[b.form_id.value].type_id});
     } else if constexpr (std::same_as<B, type::Application>) {
-      // TODO: Slow algorithms are SLOW and STUPID.
-      auto type_id = forms[b.definition_id.value].type;
-      for (auto &arg_id : b.argument_ids) {
-        type_id = ts.instantiate(type_id, arg_id);
-      }
-      constraints.push_back(SubtypeOf{a_id, type_id});
+      constraints.push_back(SubtypeOf{a_id, ts.instantiate(b.function_id, b.argument_id)});
     } else {
       // static_assert(false);
       todo();
     }
   }
 
-  std::vector<entity::TypeFormDefinition> const &forms;
-  storage::TypeStorage &ts;
+  move_only_vector<entity::TypeDefinition> const &forms;
+  type_storage::TypeStorage &ts;
   std::deque<SubtypeOf> &constraints;
   id::TypeId a_id;
   id::TypeId b_id;
@@ -110,7 +105,7 @@ export struct Solver {
   void add_constraint(SubtypeOf c) { m_constraints.push_back(c); }
 
   void solve(std::ostream &os, std::function<void(std::ostream &os, id::TypeId)> log,
-             std::vector<entity::TypeFormDefinition> const &forms, storage::TypeStorage &ts) {
+             move_only_vector<entity::TypeDefinition> const &forms, type_storage::TypeStorage &ts) {
     while (not m_constraints.empty()) {
       for (std::size_t i = 0; i < m_constraints.size(); ++i) {
         for (std::size_t j = i + 1; j < m_constraints.size(); ++j) {

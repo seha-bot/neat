@@ -7,14 +7,14 @@
 
 import formatter;
 import parser;
+import token;
 import typechecker;
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
-    std::cerr << "Usage: lispy <source>\n";
+    std::cerr << "Usage: neat <source>\n";
     return EXIT_FAILURE;
   }
-  // can std::filesystem be used here maybe?
   std::string const filename = argv[1];
 
   std::string source;
@@ -29,25 +29,37 @@ int main(int argc, char *argv[]) {
     source = std::move(buffer).str();
   }
 
-  auto ast = parser::parse(source);
-  if (not ast) {
-    std::cerr << ast.error() << '\n';
+  // token::Tokenizer tokenizer{source};
+  // while (true) {
+  //   auto tok = tokenizer.next();
+  //   if (tok.type == token::Type::end) {
+  //     break;
+  //   }
+  //   std::cout << tok.view << ' ' << type_to_string(tok.type) << '\n';
+  // }
+  // return 0;
+
+  auto resolved_ast = parser::parse(source);
+  if (not resolved_ast) {
+    std::cerr << resolved_ast.error();
     return EXIT_FAILURE;
   }
-
-  std::cout << "STRUCTURED AST START.\n";
-  for (auto &entity : ast->entities) {
-    formatter::format_entity(std::cout, {*ast->ts, ast->entities, ast->forms, ast->tags}, 0,
-                             entity);
+  for (auto &form : resolved_ast->forms) {
+    formatter::format_form(std::cout, {resolved_ast->ts, resolved_ast->forms, resolved_ast->tags},
+                           form);
     std::cout << '\n';
   }
-  std::cout << "STRUCTURED AST END.\n";
+  for (auto &value : resolved_ast->values) {
+    formatter::format_value(
+        std::cout,
+        {resolved_ast->ts, resolved_ast->forms, resolved_ast->values, resolved_ast->tags}, value);
+    std::cout << '\n';
+  }
 
-  auto type_env = analyser::typecheck(*ast->ts, ast->tags, ast->forms, std::move(ast->entities));
+  auto type_env = typechecker::typecheck(resolved_ast->ts, resolved_ast->tags, resolved_ast->forms,
+                                         std::move(resolved_ast->values));
   // if (not type_env) {
   //   std::cerr << type_env.error() << '\n';
   //   return EXIT_FAILURE;
   // }
-
-  // emitter::emit(*ast, *type_env, std::cout);
 }

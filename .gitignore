@@ -1,4 +1,4 @@
-build/
 .cache/
 .direnv/
-.vscode/
+build/
+.envrc

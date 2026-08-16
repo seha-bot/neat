@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.3.4)
-project(lispy VERSION 0.0.1 LANGUAGES CXX)
+project(neat VERSION 0.0.1 LANGUAGES CXX)
 
 # Disable standard decaying and disable extensions.
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,9 +20,3 @@ target_compile_features(compiler_flags INTERFACE cxx_std_23)
 target_compile_options(compiler_flags INTERFACE -Wall -Wextra -Wpedantic -Wunused -Wshadow -Wconversion -Wsign-conversion)
 
 add_subdirectory(src)
-
-# option(BUILD_TESTS "should tests be built" ON)
-# if(BUILD_TESTS)
-#     enable_testing()
-#     add_subdirectory(tests)
-# endif()

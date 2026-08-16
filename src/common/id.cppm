@@ -8,10 +8,10 @@ export module id;
 export namespace id {
 
 enum class Domain {
-  entity,
   form,
   tag,
   type,
+  value,
 };
 
 template <Domain D> struct Id {
@@ -19,12 +19,12 @@ template <Domain D> struct Id {
   std::size_t value;
 };
 
-struct EntityId : Id<Domain::entity> {
-  bool operator==(EntityId const &id) const { return value == id.value; }
-};
-
 struct FormId : Id<Domain::form> {
   bool operator==(FormId const &id) const { return value == id.value; }
+};
+
+struct ValueId : Id<Domain::value> {
+  bool operator==(ValueId const &id) const { return value == id.value; }
 };
 
 struct TagId : Id<Domain::tag> {

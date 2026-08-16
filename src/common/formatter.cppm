@@ -4,13 +4,14 @@ module;
 #include <ostream>
 #include <string>
 #include <variant>
-#include <vector>
 
 export module formatter;
 
+import ast;
 import entity;
 import expr;
 import id;
+import move_only_vector;
 import tag;
 import todo;
 import type;
@@ -19,34 +20,32 @@ import type_storage;
 export namespace formatter {
 
 struct Context {
-  storage::TypeStorage const &ts;
-  std::vector<entity::ModuleEntity<expr::Expr>> const &entities;
-  std::vector<entity::TypeFormDefinition> const &forms;
-  std::vector<tag::Tag> const &tags;
+  type_storage::TypeStorage const &ts;
+  move_only_vector<entity::TypeDefinition> const &forms;
+  move_only_vector<entity::ValueDefinition<expr::Expr>> const &values;
+  move_only_vector<tag::Tag> const &tags;
 };
 
 } // namespace formatter
 
 namespace {
 
-void format_pattern(std::ostream &os, formatter::Context ctx, expr::Pattern const &pat) {
+void format_pattern(std::ostream &os, formatter::Context ctx, expr::pattern::Pattern const &pat) {
   struct Visitor {
-    void operator()(expr::TagPattern const &t) { os << ctx.tags[t.tag_id.value].name; }
-    void operator()(expr::TaggedValuePattern const &t) {
-      os << '(' << ctx.tags[t.tag_id.value].name << ' ';
-      format_pattern(os, ctx, *t.rest);
-      os << ')';
+    void operator()(expr::pattern::TaggedValue const &t) {
+      os << ctx.tags[t.tag_id.value].name << ' ';
+      format_pattern(os, ctx, *t.value);
     }
-    void operator()(expr::PackPattern const &p) {
-      os << "(pack";
+    void operator()(expr::pattern::Pack const &p) {
+      os << '{';
       for (auto &t : p.tagged_values) {
-        os << " (" << ctx.tags[t.tag_id.value].name << ' ';
-        format_pattern(os, ctx, *t.rest);
-        os << ')';
+        os << ctx.tags[t.tag_id.value].name << " = ";
+        format_pattern(os, ctx, *t.value);
+        os << ',';
       }
-      os << ')';
+      os << '}';
     }
-    void operator()(expr::BindingPattern const &b) { os << b.binding->name; }
+    void operator()(expr::pattern::Binding const &b) { os << b.binding->name; }
 
     std::ostream &os;
     formatter::Context ctx;
@@ -59,9 +58,9 @@ void format_pattern(std::ostream &os, formatter::Context ctx, expr::Pattern cons
 export namespace formatter {
 
 struct TypeContext {
-  storage::TypeStorage const &ts;
-  std::vector<entity::TypeFormDefinition> const &forms;
-  std::vector<tag::Tag> const &tags;
+  type_storage::TypeStorage const &ts;
+  move_only_vector<entity::TypeDefinition> const &forms;
+  move_only_vector<tag::Tag> const &tags;
 };
 
 std::string type_name(TypeContext ctx, id::TypeId t) {
@@ -69,18 +68,23 @@ std::string type_name(TypeContext ctx, id::TypeId t) {
     std::string operator()(type::Arrow const &b) {
       return "(" + type_name(ctx, b.from_id) + ") -> " + type_name(ctx, b.to_id);
     }
-    std::string operator()(type::ForAll const &c) { return "Π." + type_name(ctx, c.type_id); }
+    std::string operator()(type::ForAll const &c) { return "∀ " + type_name(ctx, c.type_id); }
     std::string operator()(type::DeBruijnIndex const &d) { return std::to_string(d.value); }
     std::string operator()(type::Union const &v) {
       if (v.elements.empty()) {
-        return "[]";
+        return "NEVER";
       }
 
-      std::string str = "[";
+      std::string str;
       for (auto &[tag_id, type_id] : v.elements) {
-        str += " " + ctx.tags[tag_id.value].name.substr(1) + ": " + type_name(ctx, type_id) + ";";
+        if (str.empty()) {
+          str += ":";
+        } else {
+          str += " | :";
+        }
+        str += ctx.tags[tag_id.value].name + ' ' + type_name(ctx, type_id);
       }
-      return str + " ]";
+      return str;
     }
     std::string operator()(type::Struct const &s) {
       if (s.elements.empty()) {
@@ -88,22 +92,18 @@ std::string type_name(TypeContext ctx, id::TypeId t) {
       }
       std::string str = "{";
       for (auto &[tag_id, type_id] : s.elements) {
-        str += " " + ctx.tags[tag_id.value].name.substr(1) + ": " + type_name(ctx, type_id) + ";";
+        str += " " + ctx.tags[tag_id.value].name + " :: " + type_name(ctx, type_id) + ",";
       }
       return str + " }";
     }
     std::string operator()(type::Application const &app) {
-      auto str = "(" + ctx.forms[app.definition_id.value].name;
-      for (auto &id : app.argument_ids) {
-        str += " " + type_name(ctx, id);
-      }
-      return str + ")";
+      return type_name(ctx, app.function_id) + " (" + type_name(ctx, app.argument_id) + ")";
     }
     std::string operator()(type::Variable const &) {
       return "#" + std::to_string(ctx.ts.m_rep.representative(t).value);
     }
     std::string operator()(type::NamedTypeReference const &a) {
-      return ctx.forms[a.definition_id.value].name;
+      return ctx.forms[a.form_id.value].name;
     }
 
     TypeContext ctx;
@@ -115,51 +115,47 @@ std::string type_name(TypeContext ctx, id::TypeId t) {
 void format_expr(std::ostream &os, Context ctx, std::size_t depth, expr::Expr const &expr) {
   struct Visitor {
     void operator()(expr::Application const &app) {
-      os << '(';
       format_expr(os, ctx, 0, *app.function);
-      os << ' ';
+      os << " (";
       format_expr(os, ctx, 0, *app.argument);
       os << ')';
     }
     void operator()(expr::Case const &c) {
-      os << "(case ";
+      os << "case ";
       format_expr(os, ctx, 0, *c.scrutinee);
-      for (auto &ch : c.choices) {
+      os << " of {";
+      for (auto &[pattern, result] : c.choices) {
         os << ' ';
-        format_pattern(os, ctx, ch.pattern);
-        os << ' ';
-        format_expr(os, ctx, 0, ch.arm);
+        format_pattern(os, ctx, pattern);
+        os << " -> ";
+        format_expr(os, ctx, 0, result);
+        os << ',';
       }
-      os << ')';
+      os << " }";
     }
     void operator()(expr::TaggedValue const &v) {
-      os << '(' << ctx.tags[v.tag_id.value].name << ' ';
+      os << ':' << ctx.tags[v.tag_id.value].name << ' ';
       format_expr(os, ctx, 0, *v.value);
-      os << ')';
     }
     void operator()(expr::Pack const &p) {
-      os << "(pack";
+      os << '{';
       for (auto &val : p.tagged_values) {
-        os << " (" << ctx.tags[val.tag_id.value].name << ' ';
+        os << ctx.tags[val.tag_id.value].name << " = ";
         format_expr(os, ctx, 0, *val.value);
-        os << ')';
+        os << ',';
       }
-      os << ')';
+      os << '}';
     }
     void operator()(expr::Lambda const &l) {
-      os << "(lambda (" << l.binding->name << ' '
-         << type_name({ctx.ts, ctx.forms, ctx.tags}, l.binding->type_id) << ") ";
+      os << '|' << l.binding->name << ' '
+         << type_name({ctx.ts, ctx.forms, ctx.tags}, l.binding->type_id) << "| ";
       format_expr(os, ctx, 0, *l.body);
-      os << ')';
     }
     void operator()(expr::TVLambda const &l) {
-      os << "(tv-lambda ";
+      os << "Λ ";
       format_expr(os, ctx, 0, *l.body);
-      os << ')';
     }
-    void operator()(expr::ValueReference const &v) {
-      os << ctx.entities[v.value_entity_id.value].name();
-    }
+    void operator()(expr::ValueReference const &v) { os << ctx.values[v.value_id.value].name; }
     void operator()(expr::BindingReference const &b) { os << b.binding.get().name; }
 
     std::ostream &os;
@@ -170,33 +166,25 @@ void format_expr(std::ostream &os, Context ctx, std::size_t depth, expr::Expr co
   std::visit(Visitor{os, ctx, depth}, expr);
 }
 
-void format_entity(std::ostream &os, Context ctx, std::size_t depth,
-                   entity::ModuleEntity<expr::Expr> const &entity) {
-  struct Visitor {
-    void operator()(entity::ValueDeclaration const &val) {
-      os << "(dec " << val.name << ' '
-         << type_name({ctx.ts, ctx.forms, ctx.tags}, val.type_signature) << ')';
-    }
-    void operator()(entity::ValueDefinition<expr::Expr> const &val) {
-      os << "(def " << val.name << ' ';
-      format_expr(os, ctx, depth, *val.value);
-      os << ')';
-    }
-    void operator()(entity::MergedValueDefinition<expr::Expr> const &val) {
-      os << "(dec " << val.name << ' '
-         << type_name({ctx.ts, ctx.forms, ctx.tags}, val.type_signature) << ")\n";
-      os << "(def " << val.name << ' ';
-      format_expr(os, ctx, depth, *val.value);
-      os << ')';
-    }
-    void operator()(entity::ModuleDefinition const &) { todo(); }
+void format_kind(std::ostream &os, ast::kind::Kind const &) { os << '?'; }
 
-    std::ostream &os;
-    Context ctx;
-    std::size_t depth;
-  };
-  os << std::string(depth, ' ');
-  std::visit(Visitor{os, ctx, depth}, entity);
+void format_form(std::ostream &os, TypeContext ctx, entity::TypeDefinition const &form) {
+  os << "form " << form.name;
+  for (auto &[name, kind] : form.type_bindings) {
+    os << " (" << name << ' ';
+    format_kind(os, kind);
+    os << ')';
+  }
+  os << " = " << type_name(ctx, form.type_id);
+}
+
+void format_value(std::ostream &os, Context ctx, entity::ValueDefinition<expr::Expr> const &value) {
+  if (value.type_id) {
+    os << "dec " << value.name << " :: " << type_name({ctx.ts, ctx.forms, ctx.tags}, *value.type_id)
+       << '\n';
+  }
+  os << "def " << value.name << " = ";
+  format_expr(os, ctx, 0, value.value);
 }
 
 } // namespace formatter

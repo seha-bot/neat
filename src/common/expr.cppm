@@ -3,12 +3,12 @@ module;
 #include <functional>
 #include <memory>
 #include <variant>
-#include <vector>
 
 export module expr;
 
 import entity;
 import id;
+import move_only_vector;
 
 export namespace expr {
 
@@ -19,35 +19,35 @@ struct Application {
   std::unique_ptr<Expr> argument;
 };
 
+namespace pattern {
+
 struct Pattern;
 
-struct TagPattern {
+struct TaggedValue {
   id::TagId tag_id;
+  std::unique_ptr<Pattern> value;
 };
 
-struct TaggedValuePattern {
-  id::TagId tag_id;
-  std::unique_ptr<Pattern> rest;
+struct Pack {
+  move_only_vector<TaggedValue> tagged_values;
 };
 
-struct PackPattern {
-  std::vector<TaggedValuePattern> tagged_values;
-};
-
-struct BindingPattern {
+struct Binding {
   std::unique_ptr<entity::Binding> binding;
 };
 
-using PatternBase = std::variant<TagPattern, TaggedValuePattern, PackPattern, BindingPattern>;
+using PatternBase = std::variant<TaggedValue, Pack, Binding>;
 struct Pattern : PatternBase {
   using PatternBase::PatternBase;
 };
+
+} // namespace pattern
 
 struct Choice;
 
 struct Case {
   std::unique_ptr<Expr> scrutinee;
-  std::vector<Choice> choices;
+  move_only_vector<Choice> choices;
 };
 
 struct TaggedValue {
@@ -56,11 +56,11 @@ struct TaggedValue {
 };
 
 struct Pack {
-  std::vector<TaggedValue> tagged_values;
+  move_only_vector<TaggedValue> tagged_values;
 };
 
 struct Lambda {
-  std::vector<std::reference_wrapper<entity::Binding const>> captures;
+  move_only_vector<std::reference_wrapper<entity::Binding const>> captures;
   std::unique_ptr<entity::Binding> binding;
   std::unique_ptr<Expr> body;
 };
@@ -70,11 +70,7 @@ struct TVLambda {
 };
 
 struct ValueReference {
-  // std::variant<entity::ValueDeclaration const *, entity::ValueDefinition const *,
-  //              entity::MergedValueDefinition const *>
-  //     entity;
-  // TODO: This is guaranteed to be one from the comment above.
-  id::EntityId value_entity_id;
+  id::ValueId value_id;
 };
 
 struct BindingReference {
@@ -88,8 +84,8 @@ struct Expr : ExprBase {
 };
 
 struct Choice {
-  Pattern pattern;
-  Expr arm;
+  pattern::Pattern pattern;
+  Expr result;
 };
 
 } // namespace expr

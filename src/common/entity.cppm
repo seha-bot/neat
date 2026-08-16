@@ -1,35 +1,19 @@
 module;
 
-#include <memory>
+#include <optional>
 #include <string>
-#include <variant>
 
 export module entity;
 
+import ast;
 import id;
-import todo;
+import move_only_vector;
 
 export namespace entity {
 
-struct ValueDeclaration {
+struct TypeBinding {
   std::string name;
-  id::TypeId type_signature;
-};
-
-template <typename Expr> struct ValueDefinition {
-  std::string name;
-  std::unique_ptr<Expr> value;
-};
-
-template <typename Expr> struct MergedValueDefinition {
-  std::string name;
-  id::TypeId type_signature;
-  std::unique_ptr<Expr> value;
-};
-
-struct TypeFormDefinition {
-  std::string name;
-  id::TypeId type;
+  ast::kind::Kind kind;
 };
 
 struct Binding {
@@ -37,28 +21,16 @@ struct Binding {
   id::TypeId type_id;
 };
 
-struct TypeBinding {
+struct TypeDefinition {
   std::string name;
+  move_only_vector<TypeBinding> type_bindings;
+  id::TypeId type_id;
 };
 
-struct ModuleDefinition {
+template <typename Expr> struct ValueDefinition {
+  std::optional<id::TypeId> type_id;
   std::string name;
-};
-
-template <typename Expr>
-using ModuleEntityBase = std::variant<ValueDeclaration, ValueDefinition<Expr>,
-                                      MergedValueDefinition<Expr>, ModuleDefinition>;
-
-template <typename Expr> struct ModuleEntity : ModuleEntityBase<Expr> {
-  using ModuleEntityBase<Expr>::ModuleEntityBase;
-
-  std::string &name() {
-    return std::visit([](auto &e) -> std::string & { return e.name; }, *this);
-  }
-
-  std::string const &name() const {
-    return std::visit([](auto &e) -> std::string const & { return e.name; }, *this);
-  }
+  Expr value;
 };
 
 } // namespace entity

@@ -9,10 +9,11 @@ module;
 export module type_storage;
 
 import id;
+import move_only_vector;
 import todo;
 import type;
 
-export namespace storage {
+export namespace type_storage {
 
 struct RepresentativeSets {
 private:
@@ -62,9 +63,9 @@ private:
 struct TypeStorage {
   TypeStorage() = default;
   TypeStorage(TypeStorage const &) = delete;
+  TypeStorage(TypeStorage &&) = default;
   TypeStorage &operator=(TypeStorage const &) = delete;
-  TypeStorage(TypeStorage &&) = delete;
-  TypeStorage &operator=(TypeStorage &&) = delete;
+  TypeStorage &operator=(TypeStorage &&) = default;
   ~TypeStorage() = default;
 
   // TODO: In order to reduce the amount of types stored, you could keep a vector
@@ -124,7 +125,7 @@ private:
         return index.value == depth ? subst_id : type_id;
       }
       id::TypeId operator()(type::Union const &v) {
-        std::vector<type::Element> elements;
+        move_only_vector<type::Element> elements;
         elements.reserve(v.elements.size());
         for (auto &e : v.elements) {
           elements.push_back({
@@ -132,10 +133,10 @@ private:
               .type_id = ts.instantiate_impl(e.type_id, subst_id, depth),
           });
         }
-        return ts.store(type::Union{elements});
+        return ts.store(type::Union{std::move(elements)});
       }
       id::TypeId operator()(type::Struct const &s) {
-        std::vector<type::Element> elements;
+        move_only_vector<type::Element> elements;
         elements.reserve(s.elements.size());
         for (auto &e : s.elements) {
           elements.push_back({
@@ -143,14 +144,13 @@ private:
               .type_id = ts.instantiate_impl(e.type_id, subst_id, depth),
           });
         }
-        return ts.store(type::Struct{elements});
+        return ts.store(type::Struct{std::move(elements)});
       }
-      id::TypeId operator()(type::Application const &app) {
-        std::vector<id::TypeId> instantiated_argument_ids;
-        for (auto &id : app.argument_ids) {
-          instantiated_argument_ids.push_back(ts.instantiate_impl(id, subst_id, depth));
-        }
-        return ts.store(type::Application{app.definition_id, std::move(instantiated_argument_ids)});
+      id::TypeId operator()(type::Application app) {
+        return ts.store(type::Application{
+            .function_id = ts.instantiate_impl(app.function_id, subst_id, depth),
+            .argument_id = ts.instantiate_impl(app.argument_id, subst_id, depth),
+        });
       }
       id::TypeId operator()(type::Variable const &) { return type_id; }
       id::TypeId operator()(type::NamedTypeReference const &) { return type_id; }
@@ -187,13 +187,10 @@ private:
           });
     }
     bool operator()(type::Application const &a, type::Application const &b) {
-      return a.definition_id == b.definition_id and
-             std::ranges::equal(
-                 a.argument_ids, b.argument_ids,
-                 [&](id::TypeId a_id, id::TypeId b_id) { return ts.equal(a_id, b_id); });
+      return ts.equal(a.function_id, b.function_id) and ts.equal(a.argument_id, b.argument_id);
     }
     bool operator()(type::NamedTypeReference const &a, type::NamedTypeReference const &b) {
-      return a.definition_id == b.definition_id;
+      return a.form_id == b.form_id;
     }
 
     // Exhaustive alternatives for non-equal types.
@@ -227,4 +224,4 @@ public:
   std::vector<type::Type> m_types;
 };
 
-} // namespace storage
+} // namespace type_storage

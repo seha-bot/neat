@@ -3,13 +3,13 @@ module;
 #include <functional>
 #include <memory>
 #include <variant>
-#include <vector>
 
 export module typed_expr;
 
 import entity;
 import expr;
 import id;
+import move_only_vector;
 
 export namespace typed_expr {
 
@@ -28,7 +28,7 @@ struct Choice;
 
 struct Case : Typed {
   std::unique_ptr<Expr> scrutinee;
-  std::vector<Choice> choices;
+  move_only_vector<Choice> choices;
 };
 
 struct TaggedValue : Typed {
@@ -37,11 +37,11 @@ struct TaggedValue : Typed {
 };
 
 struct Pack : Typed {
-  std::vector<TaggedValue> tagged_values;
+  move_only_vector<TaggedValue> tagged_values;
 };
 
 struct Lambda : Typed {
-  std::vector<std::reference_wrapper<entity::Binding const>> captures;
+  move_only_vector<std::reference_wrapper<entity::Binding const>> captures;
   std::unique_ptr<entity::Binding> binding;
   std::unique_ptr<Expr> body;
 };
@@ -51,11 +51,7 @@ struct TVLambda : Typed {
 };
 
 struct ValueReference : Typed {
-  // std::variant<entity::ValueDeclaration const *, entity::ValueDefinition const *,
-  //              entity::MergedValueDefinition const *>
-  //     entity;
-  // TODO: This is guaranteed to be one from the comment above.
-  id::EntityId value_entity_id;
+  id::ValueId value_id;
 };
 
 struct BindingReference : Typed {
@@ -77,7 +73,7 @@ struct Expr : ExprBase {
 };
 
 struct Choice {
-  expr::Pattern pattern;
+  expr::pattern::Pattern pattern;
   Expr arm;
 };
 
