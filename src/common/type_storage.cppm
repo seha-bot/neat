@@ -77,15 +77,19 @@ struct TypeStorage {
     return id::VariableId{id};
   }
 
+  [[nodiscard]] id::TypeId store_new(type::Type type) {
+    id::TypeId id{m_types.size()};
+    m_types.push_back(std::move(type));
+    return id;
+  }
+
   [[nodiscard]] id::TypeId store(type::Type type) {
     for (std::size_t i = 0; i < m_types.size(); ++i) {
       if (type_equal(m_types[i], type)) {
         return id::TypeId{i};
       }
     }
-    id::TypeId id{m_types.size()};
-    m_types.push_back(std::move(type));
-    return id;
+    return store_new(std::move(type));
   }
 
   [[nodiscard]] type::Type const &read(id::TypeId id) const {

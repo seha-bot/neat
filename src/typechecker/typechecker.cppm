@@ -48,32 +48,12 @@ typed_expr::Expr get_type(Context &ctx, expr::Expr expr) noexcept {
       auto function = get_type(ctx, std::move(*call.function));
       auto argument = get_type(ctx, std::move(*call.argument));
 
-      // auto [from_id, to_id] = [&] {
-      //   // // std::cout << "DEBUG " << formatter::type_name({ctx.ts, *forms, *tags},
-      //   function.type_id()) << '\n';
-      //   // if (auto *arr = std::get_if<type::Arrow>(&ctx.ts.read(function.type_id()))) {
-      //   //   return std::make_pair(arr->from_id, arr->to_id);
-      //   // }
-      //   // // throw;
-      //   id::TypeId const from_id = ctx.ts.make_variable();
-      //   id::TypeId const to_id = ctx.ts.make_variable();
-      //   // TODO: This really doesn't need redundancy checking in store.
-      //   auto invented_function_type_id = ctx.ts.store(type::Arrow{from_id, to_id});
-      //   ctx.solver.add_constraint(constraint::SubtypeOf{
-      //       invented_function_type_id,
-      //       function.type_id(),
-      //   });
-      //   ctx.solver.add_constraint(constraint::SubtypeOf{
-      //       function.type_id(),
-      //       invented_function_type_id,
-      //   });
-      //   return std::make_pair(from_id, to_id);
-      // }();
-
+      // Variable generation can be optimized here.
+      // If function.type_id() is an arrow, reuse it.
+      // If function.type_id() is a variable, merge it with an invented arrow.
       id::TypeId const from_id = ctx.ts.make_variable();
       id::TypeId const to_id = ctx.ts.make_variable();
-      // TODO: This really doesn't need redundancy checking in store.
-      auto invented_function_type_id = ctx.ts.store(type::Arrow{from_id, to_id});
+      auto invented_function_type_id = ctx.ts.store_new(type::Arrow{from_id, to_id});
       ctx.solver.add_constraint(constraint::SubtypeOf{
           function.type_id(),
           invented_function_type_id,
@@ -155,9 +135,15 @@ typed_expr::Expr get_type(Context &ctx, expr::Expr expr) noexcept {
     }
     typed_expr::Expr operator()(expr::Lambda lambda) {
       auto body = get_type(ctx, std::move(*lambda.body));
-      // TODO: You might not have to check for duplicates in store if binding_type_id represents a
-      // fresh variable.
-      auto const type_id = ctx.ts.store(type::Arrow{lambda.binding->type_id, body.type_id()});
+      id::TypeId type_id;
+      // Optimization: The tree is walked once, so this is the first time we encounter this binding.
+      // If its type is a variable, then nothing could've mentioned it at this point,
+      // so there are no types containing it.
+      if (std::holds_alternative<type::Variable>(ctx.ts.read(lambda.binding->type_id))) {
+        type_id = ctx.ts.store_new(type::Arrow{lambda.binding->type_id, body.type_id()});
+      } else {
+        type_id = ctx.ts.store(type::Arrow{lambda.binding->type_id, body.type_id()});
+      }
       return typed_expr::Lambda{
           {type_id},
           std::move(lambda.captures),
