@@ -31,9 +31,9 @@ struct ParseError {};
 namespace {
 
 struct Context {
-  Context with_type_binding(ast::kind::Kind const *kind, std::string_view name) const {
+  Context with_type_binding(ast::type::Binding const &type_binding) const {
     std::unordered_map<std::string_view, scope::Entry> names;
-    names.insert({name, scope::TypeBinding{kind, type_binding_depth}});
+    names.insert({type_binding.name, scope::TypeBinding{&type_binding.kind, type_binding_depth}});
     return {ts, tags, scope::Scope{std::move(names), &scope}, type_binding_depth + 1};
   }
 
@@ -48,8 +48,6 @@ struct Context {
   scope::Scope scope;
   std::size_t const type_binding_depth;
 };
-
-static constexpr ast::kind::Kind basic_kind = ast::kind::Type{};
 
 namespace typey {
 
@@ -66,7 +64,7 @@ std::expected<type::Arrow, ParseError> parse_type(Context &ctx, ast::type::Arrow
 
 std::expected<type::ForAll, ParseError> parse_type(Context &ctx,
                                                    ast::type::ForAll for_all) noexcept {
-  auto new_ctx = ctx.with_type_binding(&basic_kind, for_all.type_binding);
+  auto new_ctx = ctx.with_type_binding(for_all.binding);
   TRY_DEF(type_id, parse_basic_type(new_ctx, std::move(*for_all.type)));
   return type::ForAll{.type_id = *type_id};
 }
@@ -161,6 +159,8 @@ parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcep
 
   todo();
 }
+
+static constexpr ast::kind::Kind basic_kind = ast::kind::Type{};
 
 std::expected<id::TypeId, ParseError> parse_basic_type(Context &ctx,
                                                        ast::type::Type type) noexcept {
@@ -354,7 +354,7 @@ std::expected<expr::Lambda, ParseError> parse_expr(Context &ctx,
 
 std::expected<expr::TVLambda, ParseError> parse_expr(Context &ctx,
                                                      ast::expr::TVLambda tv_lambda) noexcept {
-  auto new_ctx = ctx.with_type_binding(&basic_kind, tv_lambda.type_binding);
+  auto new_ctx = ctx.with_type_binding(tv_lambda.type_binding);
   TRY_DEF(body, parse_expr(new_ctx, std::move(*tv_lambda.body)));
   return expr::TVLambda{.body = std::make_unique<expr::Expr>(*std::move(body))};
 }
@@ -392,7 +392,7 @@ parse_type_definition(Context &ctx, ast::entity::TypeDefinition form) noexcept {
   move_only_vector<std::unique_ptr<Context>> ctxs;
   for (auto it = form.type_bindings.rbegin(); it != form.type_bindings.rend(); ++it) {
     auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(&it->kind, it->name)));
+    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(*it)));
   }
 
   auto &prev = ctxs.empty() ? ctx : *ctxs.back();
@@ -422,7 +422,7 @@ parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept 
   for (auto it = def.type_bindings.rbegin(); it != def.type_bindings.rend(); ++it) {
     auto &type_binding = *it;
     value = ast::expr::TVLambda{
-        .type_binding = type_binding,
+        .type_binding = std::move(type_binding),
         .body = std::make_unique<ast::expr::Expr>(std::move(value)),
     };
   }

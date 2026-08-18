@@ -201,7 +201,7 @@ std::expected<ast::kind::Kind, ParseError> parse_kind(Parser &parser) noexcept {
 } // namespace kind
 
 // arrow := app_type "->" ! arrow_type
-// forall := "[" ! id "]" arrow_type
+// forall := "[" ! (id "::" kind | id) "]" arrow_type
 // struct_step := id "::" type ("," struct_step | "}") | "}"
 // struct := "{" ! struct_step
 // This is left-associative.
@@ -234,10 +234,19 @@ std::expected<ast::type::ForAll, ParseError> parse_for_all(Parser &parser) noexc
   TRY(parser.expect<token::Type::left_bracket>());
   return cut([&] -> decltype(parse_for_all(parser)) {
     TRY_DEF(type_binding, parser.expect<token::Type::id>());
+    ast::kind::Kind kind = ast::kind::Type{};
+    if (parser.expect<token::Type::has_type>()) {
+      TRY_DEF(parsed_kind, kind::parse_kind(parser));
+      kind = *std::move(parsed_kind);
+    }
     TRY(parser.expect<token::Type::right_bracket>());
     TRY_DEF(type, parse_arrow_type(parser));
     return ast::type::ForAll{
-        .type_binding = type_binding->view,
+        .binding =
+            ast::type::Binding{
+                .name = type_binding->view,
+                .kind = std::move(kind),
+            },
         .type = std::make_unique<ast::type::Type>(*std::move(type)),
     };
   }());
@@ -411,7 +420,7 @@ std::expected<ast::pattern::Pattern, ParseError> parse_pattern(Parser &parser) n
 // pack := "{" ! pack_step
 // binding := id "::" type | id
 // lambda := "|" ! binding "|" expr
-// tv_lambda := "[" ! id "]" expr
+// tv_lambda := "[" ! (id "::" kind | id) "]" expr
 // ref := id
 // primary_expr := case | tagged_value | pack | lambda | tv_lambda | ref | "(" expr ")"
 // expr := app | primary_expr
@@ -548,10 +557,19 @@ std::expected<ast::expr::TVLambda, ParseError> parse_tv_lambda(Parser &parser) n
   TRY(parser.expect<token::Type::left_bracket>());
   return cut([&] -> decltype(parse_tv_lambda(parser)) {
     TRY_DEF(type_binding, parser.expect<token::Type::id>());
+    ast::kind::Kind kind = ast::kind::Type{};
+    if (parser.expect<token::Type::has_type>()) {
+      TRY_DEF(parsed_kind, kind::parse_kind(parser));
+      kind = *std::move(parsed_kind);
+    }
     TRY(parser.expect<token::Type::right_bracket>());
     TRY_DEF(body, parse_expr(parser));
     return ast::expr::TVLambda{
-        .type_binding = type_binding->view,
+        .type_binding =
+            ast::type::Binding{
+                .name = type_binding->view,
+                .kind = std::move(kind),
+            },
         .body = std::make_unique<ast::expr::Expr>(*std::move(body)),
     };
   }());
@@ -578,9 +596,9 @@ std::expected<ast::expr::Expr, ParseError> parse_expr(Parser &parser) noexcept {
 // type_binding := id | "(" id "::" kind ")"
 // type_definition := "form" ! id type_binding* "=" type
 // declaration := "dec" ! id "::" type
-// simple_type_binding := "[" id "]"
+// tv_type_binding := "[" (id "::" kind | id) "]"
 // binding := id | "(" id :: type ")"
-// definition := "def" ! id simple_type_binding* binding* "=" expr
+// definition := "def" ! id tv_type_binding* binding* "=" expr
 // value_definition := declaration definition | definition
 // entity := type_definition | value_definition
 namespace entity {
@@ -592,7 +610,7 @@ parse_type_definition(Parser &parser) noexcept {
   return cut([&] -> decltype(parse_type_definition(parser)) {
     TRY_DEF(definition_name, parser.expect<token::Type::id>());
 
-    move_only_vector<ast::entity::TypeBinding> type_bindings;
+    move_only_vector<ast::type::Binding> type_bindings;
     while (true) {
       TRY(parser.expected<token::Type::id, token::Type::left_paren, token::Type::equal>());
       if (parser.expect<token::Type::equal>()) {
@@ -660,10 +678,18 @@ parse_value_definition(Parser &parser) noexcept {
     TRY(parser.expected<token::Type::left_bracket, token::Type::id, token::Type::left_paren,
                         token::Type::equal>());
 
-    move_only_vector<std::string_view> type_bindings;
+    move_only_vector<ast::type::Binding> type_bindings;
     while (parser.expect<token::Type::left_bracket>()) {
       TRY_DEF(type_binding, parser.expect<token::Type::id>());
-      type_bindings.push_back(type_binding->view);
+      ast::kind::Kind kind = ast::kind::Type{};
+      if (parser.expect<token::Type::has_type>()) {
+        TRY_DEF(parsed_kind, kind::parse_kind(parser));
+        kind = *std::move(parsed_kind);
+      }
+      type_bindings.push_back({
+          .name = type_binding->view,
+          .kind = std::move(kind),
+      });
       TRY(parser.expect<token::Type::right_bracket>());
     }
 

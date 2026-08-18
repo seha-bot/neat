@@ -56,8 +56,13 @@ struct Arrow {
   std::unique_ptr<Type> to;
 };
 
+struct Binding {
+  std::string_view name;
+  kind::Kind kind;
+};
+
 struct ForAll {
-  std::string_view type_binding;
+  Binding binding;
   std::unique_ptr<Type> type;
 };
 
@@ -156,7 +161,7 @@ struct Lambda {
 };
 
 struct TVLambda {
-  std::string_view type_binding;
+  type::Binding type_binding;
   std::unique_ptr<Expr> body;
 };
 
@@ -175,21 +180,16 @@ struct Expr : ExprBase {
 
 namespace entity {
 
-struct TypeBinding {
-  std::string_view name;
-  kind::Kind kind;
-};
-
 struct TypeDefinition {
   std::string_view name;
-  move_only_vector<TypeBinding> type_bindings;
+  move_only_vector<type::Binding> type_bindings;
   type::Type type;
 };
 
 struct ValueDefinition {
   std::optional<type::Type> type;
   std::string_view name;
-  move_only_vector<std::string_view> type_bindings;
+  move_only_vector<type::Binding> type_bindings;
   move_only_vector<expr::Binding> bindings;
   expr::Expr value;
 };
