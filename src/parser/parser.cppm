@@ -31,9 +31,9 @@ struct ParseError {};
 namespace {
 
 struct Context {
-  Context with_type_binding(std::string_view name) const {
+  Context with_type_binding(ast::kind::Kind const *kind, std::string_view name) const {
     std::unordered_map<std::string_view, scope::Entry> names;
-    names.insert({name, scope::TypeBinding{type_binding_depth}});
+    names.insert({name, scope::TypeBinding{kind, type_binding_depth}});
     return {ts, tags, scope::Scope{std::move(names), &scope}, type_binding_depth + 1};
   }
 
@@ -49,13 +49,15 @@ struct Context {
   std::size_t const type_binding_depth;
 };
 
+static constexpr ast::kind::Kind basic_kind = ast::kind::Type{};
+
 namespace typey {
 
-std::expected<id::TypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept;
+std::expected<id::TypeId, ParseError> parse_basic_type(Context &ctx, ast::type::Type type) noexcept;
 
 std::expected<type::Arrow, ParseError> parse_type(Context &ctx, ast::type::Arrow arr) noexcept {
-  TRY_DEF(from_id, parse_type(ctx, std::move(*arr.from)));
-  TRY_DEF(to_id, parse_type(ctx, std::move(*arr.to)));
+  TRY_DEF(from_id, parse_basic_type(ctx, std::move(*arr.from)));
+  TRY_DEF(to_id, parse_basic_type(ctx, std::move(*arr.to)));
   return type::Arrow{
       .from_id = *from_id,
       .to_id = *to_id,
@@ -64,15 +66,15 @@ std::expected<type::Arrow, ParseError> parse_type(Context &ctx, ast::type::Arrow
 
 std::expected<type::ForAll, ParseError> parse_type(Context &ctx,
                                                    ast::type::ForAll for_all) noexcept {
-  auto new_ctx = ctx.with_type_binding(for_all.type_binding);
-  TRY_DEF(type_id, parse_type(new_ctx, std::move(*for_all.type)));
+  auto new_ctx = ctx.with_type_binding(&basic_kind, for_all.type_binding);
+  TRY_DEF(type_id, parse_basic_type(new_ctx, std::move(*for_all.type)));
   return type::ForAll{.type_id = *type_id};
 }
 
 std::expected<type::Union, ParseError> parse_type(Context &ctx, ast::type::Union union_) noexcept {
   move_only_vector<type::Element> elements;
   for (auto &[tag, type] : union_.elements) {
-    TRY_DEF(type_id, parse_type(ctx, std::move(type)));
+    TRY_DEF(type_id, parse_basic_type(ctx, std::move(type)));
     elements.push_back({
         .tag_id = ctx.tags.get_tag(tag),
         .type_id = *type_id,
@@ -85,7 +87,7 @@ std::expected<type::Struct, ParseError> parse_type(Context &ctx,
                                                    ast::type::Struct struct_) noexcept {
   move_only_vector<type::Element> elements;
   for (auto &[tag, type] : struct_.elements) {
-    TRY_DEF(type_id, parse_type(ctx, std::move(type)));
+    TRY_DEF(type_id, parse_basic_type(ctx, std::move(type)));
     elements.push_back({
         .tag_id = ctx.tags.get_tag(tag),
         .type_id = *type_id,
@@ -94,17 +96,50 @@ std::expected<type::Struct, ParseError> parse_type(Context &ctx,
   return type::Struct{.elements = std::move(elements)};
 }
 
-std::expected<type::Application, ParseError> parse_type(Context &ctx,
-                                                        ast::type::Application app) noexcept {
+struct KindedTypeId {
+  ast::kind::Kind const *kind;
+  id::TypeId id;
+};
+
+template <typename T> struct Kinded {
+  ast::kind::Kind const *kind;
+  T type;
+};
+
+namespace detail {
+
+template <typename T> void is_kinded(Kinded<T> const &);
+
+template <typename T>
+concept kinded = requires(T &&t) { is_kinded(t); };
+
+} // namespace detail
+
+std::expected<KindedTypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept;
+
+std::expected<Kinded<type::Application>, ParseError>
+parse_type(Context &ctx, ast::type::Application app) noexcept {
   TRY_DEF(function_id, parse_type(ctx, std::move(*app.function)));
+  auto *arrow = std::get_if<ast::kind::Arrow>(function_id->kind);
+  if (not arrow) {
+    todo();
+  }
   TRY_DEF(argument_id, parse_type(ctx, std::move(*app.argument)));
-  return type::Application{
-      .function_id = *function_id,
-      .argument_id = *argument_id,
+  if (*arrow->from != *argument_id->kind) {
+    todo();
+  }
+
+  return Kinded{
+      .kind = arrow->to.get(),
+      .type =
+          type::Application{
+              .function_id = function_id->id,
+              .argument_id = argument_id->id,
+          },
   };
 }
 
-std::expected<type::Type, ParseError>
+std::expected<Kinded<type::Type>, ParseError>
 parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcept {
   auto scope_entry = ctx.scope.lookup(ref.name);
   if (not scope_entry) {
@@ -112,19 +147,44 @@ parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcep
   }
 
   if (auto *form = std::get_if<scope::TypeDefinition>(&*scope_entry)) {
-    return type::NamedTypeReference{.form_id = form->form_id};
+    return Kinded<type::Type>{
+        form->kind,
+        type::NamedTypeReference{.form_id = form->form_id},
+    };
   }
   if (auto *type_binding = std::get_if<scope::TypeBinding>(&*scope_entry)) {
-    return type::DeBruijnIndex{.value = ctx.type_binding_depth - 1 - type_binding->absolute_index};
+    return Kinded<type::Type>{
+        type_binding->kind,
+        type::DeBruijnIndex{.value = ctx.type_binding_depth - 1 - type_binding->absolute_index},
+    };
   }
 
   todo();
 }
 
-std::expected<id::TypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept {
-  auto visitor = [&](auto a_type) -> std::expected<id::TypeId, ParseError> {
+std::expected<id::TypeId, ParseError> parse_basic_type(Context &ctx,
+                                                       ast::type::Type type) noexcept {
+  TRY_DEF(type_id, parse_type(ctx, std::move(type)));
+  if (*type_id->kind != basic_kind) {
+    todo();
+  }
+  return type_id->id;
+}
+
+std::expected<KindedTypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept {
+  auto visitor = [&](auto a_type) -> std::expected<KindedTypeId, ParseError> {
     TRY_DEF(parsed_type, parse_type(ctx, std::move(a_type)));
-    return ctx.ts.store(*std::move(parsed_type));
+    if constexpr (detail::kinded<decltype(*parsed_type)>) {
+      return KindedTypeId{
+          .kind = parsed_type->kind,
+          .id = ctx.ts.store(std::move(parsed_type->type)),
+      };
+    } else {
+      return KindedTypeId{
+          .kind = &basic_kind,
+          .id = ctx.ts.store(*std::move(parsed_type)),
+      };
+    }
   };
   return std::visit(visitor, std::move(type));
 }
@@ -205,7 +265,7 @@ std::expected<entity::Binding, ParseError> parse_binding(Context &ctx,
                                                          ast::expr::Binding binding) noexcept {
   id::TypeId type_id;
   if (binding.type) {
-    TRY_DEF(parsed_type_id, typey::parse_type(ctx, *std::move(binding.type)));
+    TRY_DEF(parsed_type_id, typey::parse_basic_type(ctx, *std::move(binding.type)));
     type_id = *parsed_type_id;
   } else {
     type_id = ctx.ts.make_variable();
@@ -294,7 +354,7 @@ std::expected<expr::Lambda, ParseError> parse_expr(Context &ctx,
 
 std::expected<expr::TVLambda, ParseError> parse_expr(Context &ctx,
                                                      ast::expr::TVLambda tv_lambda) noexcept {
-  auto new_ctx = ctx.with_type_binding(tv_lambda.type_binding);
+  auto new_ctx = ctx.with_type_binding(&basic_kind, tv_lambda.type_binding);
   TRY_DEF(body, parse_expr(new_ctx, std::move(*tv_lambda.body)));
   return expr::TVLambda{.body = std::make_unique<expr::Expr>(*std::move(body))};
 }
@@ -329,25 +389,16 @@ namespace entityy {
 
 std::expected<entity::TypeDefinition, ParseError>
 parse_type_definition(Context &ctx, ast::entity::TypeDefinition form) noexcept {
-  move_only_vector<entity::TypeBinding> type_bindings;
-  for (auto &[name, kind] : form.type_bindings) {
-    type_bindings.push_back({
-        .name = static_cast<std::string>(name),
-        .kind = std::move(kind),
-    });
-  }
-
   move_only_vector<std::unique_ptr<Context>> ctxs;
-  for (auto it = type_bindings.rbegin(); it != type_bindings.rend(); ++it) {
+  for (auto it = form.type_bindings.rbegin(); it != form.type_bindings.rend(); ++it) {
     auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(it->name)));
+    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(&it->kind, it->name)));
   }
 
   auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-  TRY_DEF(type_id, typey::parse_type(prev, std::move(form.type)));
+  TRY_DEF(type_id, typey::parse_basic_type(prev, std::move(form.type)));
   return entity::TypeDefinition{
       .name = static_cast<std::string>(form.name),
-      .type_bindings = std::move(type_bindings),
       .type_id = *type_id,
   };
 }
@@ -356,7 +407,7 @@ std::expected<entity::ValueDefinition<expr::Expr>, ParseError>
 parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept {
   std::optional<id::TypeId> type_id;
   if (def.type) {
-    TRY_DEF(parsed_type_id, typey::parse_type(ctx, *std::move(def.type)));
+    TRY_DEF(parsed_type_id, typey::parse_basic_type(ctx, *std::move(def.type)));
     type_id = *parsed_type_id;
   }
 
@@ -386,6 +437,17 @@ parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept 
 
 } // namespace entityy
 
+ast::kind::Kind infer_kind(ast::entity::TypeDefinition const &form) {
+  ast::kind::Kind kind = ast::kind::Type{};
+  for (auto it = form.type_bindings.rbegin(); it != form.type_bindings.rend(); ++it) {
+    kind = ast::kind::Arrow{
+        .from = std::make_unique<ast::kind::Kind>(it->kind.clone()),
+        .to = std::make_unique<ast::kind::Kind>(std::move(kind)),
+    };
+  }
+  return kind;
+}
+
 } // namespace
 
 export struct ResolvedAST {
@@ -403,12 +465,18 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
   std::size_t form_count = 0;
   std::size_t value_count = 0;
 
+  move_only_vector<std::unique_ptr<ast::kind::Kind>> kind_storage;
+
   for (auto &entity : entities) {
     struct Visitor {
       void operator()(ast::entity::TypeDefinition const &form) {
+        kind_storage.push_back(std::make_unique<ast::kind::Kind>(infer_kind(form)));
         auto [_, did_insert] = names.insert({
             form.name,
-            scope::TypeDefinition{.form_id = id::FormId{form_count++}},
+            scope::TypeDefinition{
+                .kind = kind_storage.back().get(),
+                .form_id = id::FormId{form_count++},
+            },
         });
         if (not did_insert) {
           todo();
@@ -427,9 +495,10 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
       std::size_t &form_count;
       std::size_t &value_count;
       std::unordered_map<std::string_view, scope::Entry> &names;
+      move_only_vector<std::unique_ptr<ast::kind::Kind>> &kind_storage;
     };
 
-    std::visit(Visitor{form_count, value_count, names}, entity);
+    std::visit(Visitor{form_count, value_count, names, kind_storage}, entity);
   }
 
   type_storage::TypeStorage ts;

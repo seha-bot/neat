@@ -5,7 +5,6 @@ module;
 
 export module entity;
 
-import ast;
 import id;
 import move_only_vector;
 
@@ -13,7 +12,6 @@ export namespace entity {
 
 struct TypeBinding {
   std::string name;
-  ast::kind::Kind kind;
 };
 
 struct Binding {
@@ -23,7 +21,6 @@ struct Binding {
 
 struct TypeDefinition {
   std::string name;
-  move_only_vector<TypeBinding> type_bindings;
   id::TypeId type_id;
 };
 

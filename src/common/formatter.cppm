@@ -170,11 +170,11 @@ void format_kind(std::ostream &os, ast::kind::Kind const &) { os << '?'; }
 
 void format_form(std::ostream &os, TypeContext ctx, entity::TypeDefinition const &form) {
   os << "form " << form.name;
-  for (auto &[name, kind] : form.type_bindings) {
-    os << " (" << name << ' ';
-    format_kind(os, kind);
-    os << ')';
-  }
+  // for (auto &[name, kind] : form.type_bindings) {
+  //   os << " (" << name << ' ';
+  //   format_kind(os, kind);
+  //   os << ')';
+  // }
   os << " = " << type_name(ctx, form.type_id);
 }
 

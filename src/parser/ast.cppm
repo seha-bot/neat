@@ -16,16 +16,34 @@ namespace kind {
 struct Kind;
 
 struct Arrow {
+  bool operator==(Arrow const &that) const;
+  Arrow clone() const;
+
   std::unique_ptr<Kind> from, to;
 };
 
-struct Type {};
+struct Type {
+  bool operator==(Type const &) const { return true; }
+  Type clone() const { return Type{}; }
+};
 
 using KindBase = std::variant<Arrow, Type>;
 
 struct Kind : KindBase {
   using KindBase::KindBase;
+
+  Kind clone() const {
+    return std::visit([](auto &x) -> Kind { return x.clone(); }, *this);
+  }
 };
+
+bool Arrow::operator==(Arrow const &that) const { return *from == *that.from and *to == *that.to; }
+Arrow Arrow::clone() const {
+  return Arrow{
+      std::make_unique<Kind>(from->clone()),
+      std::make_unique<Kind>(to->clone()),
+  };
+}
 
 } // namespace kind
 
