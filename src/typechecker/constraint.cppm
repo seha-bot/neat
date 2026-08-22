@@ -40,6 +40,25 @@ export struct SubtypeOf {
 
 namespace {
 
+// This works on the assumption that the syntax doesn't allow for applying anything other
+// than references, type bindings and other applications. Other applications are recursively
+// resolved, type bindings should've been instantiated at this point because of SubtypeOfRules.
+// That means this applies only references and partially-applied references.
+[[nodiscard]] id::TypeId apply_type(type_storage::TypeStorage &ts,
+                                    move_only_vector<entity::TypeDefinition> const &forms,
+                                    id::TypeId function_id, id::TypeId argument_id) {
+  if (auto *app = std::get_if<type::Application>(&ts.read(function_id))) {
+    function_id = apply_type(ts, forms, app->function_id, app->argument_id);
+  }
+  if (auto *tt = std::get_if<type::TTLambda>(&ts.read(function_id))) {
+    return ts.instantiate(tt->type_id, argument_id);
+  }
+  if (auto *ref = std::get_if<type::NamedTypeReference>(&ts.read(function_id))) {
+    return apply_type(ts, forms, forms[ref->form_id.value].type_id, argument_id);
+  }
+  todo();
+}
+
 struct SubtypeOfRule {
   template <typename A, typename B> void operator()(A const &a, B const &b) {
     if constexpr (std::same_as<A, type::Arrow> and std::same_as<B, type::Arrow>) {
@@ -77,15 +96,15 @@ struct SubtypeOfRule {
       }
     } else if constexpr (std::same_as<A, type::Application> and
                          std::same_as<B, type::Application>) {
-      // FIX: Faulty. What if one of these isn't deduced yet?
-      if (not ts.equal(a.function_id, b.function_id)) {
-        todo();
-      }
+      constraints.push_back(SubtypeOf{a.function_id, b.function_id});
       constraints.push_back(SubtypeOf{a.argument_id, b.argument_id});
     } else if constexpr (std::same_as<B, type::NamedTypeReference>) {
       constraints.push_back(SubtypeOf{a_id, forms[b.form_id.value].type_id});
     } else if constexpr (std::same_as<B, type::Application>) {
-      constraints.push_back(SubtypeOf{a_id, ts.instantiate(b.function_id, b.argument_id)});
+      constraints.push_back(SubtypeOf{
+          a_id,
+          apply_type(ts, forms, b.function_id, b.argument_id),
+      });
     } else {
       // static_assert(false);
       todo();

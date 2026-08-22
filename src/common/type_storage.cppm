@@ -150,6 +150,11 @@ private:
         }
         return ts.store(type::Struct{std::move(elements)});
       }
+      id::TypeId operator()(type::TTLambda tt_lambda) {
+        return ts.store(type::TTLambda{
+            .type_id = ts.instantiate_impl(tt_lambda.type_id, subst_id, depth + 1),
+        });
+      }
       id::TypeId operator()(type::Application app) {
         return ts.store(type::Application{
             .function_id = ts.instantiate_impl(app.function_id, subst_id, depth),
@@ -190,6 +195,9 @@ private:
             return e1.tag_id == e2.tag_id and ts.equal(e1.type_id, e2.type_id);
           });
     }
+    bool operator()(type::TTLambda const &a, type::TTLambda const &b) {
+      return ts.equal(a.type_id, b.type_id);
+    }
     bool operator()(type::Application const &a, type::Application const &b) {
       return ts.equal(a.function_id, b.function_id) and ts.equal(a.argument_id, b.argument_id);
     }
@@ -203,6 +211,7 @@ private:
     bool operator()(type::DeBruijnIndex const &, auto &) { return false; }
     bool operator()(type::Union const &, auto &) { return false; }
     bool operator()(type::Struct const &, auto &) { return false; }
+    bool operator()(type::TTLambda const &, auto &) { return false; }
     bool operator()(type::Application const &, auto &) { return false; }
     bool operator()(type::Variable const &, auto &) { return false; }
     bool operator()(type::NamedTypeReference const &, auto &) { return false; }

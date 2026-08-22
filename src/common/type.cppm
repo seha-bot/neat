@@ -37,6 +37,11 @@ struct Struct {
   move_only_vector<Element> elements;
 };
 
+// This is also indexed by De Bruijn indices.
+struct TTLambda {
+  id::TypeId type_id;
+};
+
 struct Application {
   id::TypeId function_id;
   id::TypeId argument_id;
@@ -49,7 +54,7 @@ struct NamedTypeReference {
   id::FormId form_id;
 };
 
-using TypeBase = std::variant<Arrow, ForAll, DeBruijnIndex, Union, Struct, Application, Variable,
+using TypeBase = std::variant<Arrow, ForAll, DeBruijnIndex, Union, Struct, TTLambda, Application, Variable,
                               NamedTypeReference>;
 struct Type : TypeBase {
   using TypeBase::TypeBase;

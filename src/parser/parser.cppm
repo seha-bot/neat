@@ -390,16 +390,21 @@ namespace entityy {
 std::expected<entity::TypeDefinition, ParseError>
 parse_type_definition(Context &ctx, ast::entity::TypeDefinition form) noexcept {
   move_only_vector<std::unique_ptr<Context>> ctxs;
-  for (auto it = form.type_bindings.rbegin(); it != form.type_bindings.rend(); ++it) {
+  for (auto &type_binding : form.type_bindings) {
     auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(*it)));
+    ctxs.push_back(std::make_unique<Context>(prev.with_type_binding(type_binding)));
   }
 
   auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-  TRY_DEF(type_id, typey::parse_basic_type(prev, std::move(form.type)));
+  TRY_DEF(parsed_type_id, typey::parse_basic_type(prev, std::move(form.type)));
+  id::TypeId type_id = *parsed_type_id;
+  for (auto &_ : form.type_bindings) {
+    type_id = ctx.ts.store(type::TTLambda{type_id});
+  }
+
   return entity::TypeDefinition{
       .name = static_cast<std::string>(form.name),
-      .type_id = *type_id,
+      .type_id = type_id,
   };
 }
 

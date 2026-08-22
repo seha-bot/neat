@@ -96,6 +96,7 @@ std::string type_name(TypeContext ctx, id::TypeId t) {
       }
       return str + " }";
     }
+    std::string operator()(type::TTLambda const &tt) { return "Π " + type_name(ctx, tt.type_id); }
     std::string operator()(type::Application const &app) {
       return type_name(ctx, app.function_id) + " (" + type_name(ctx, app.argument_id) + ")";
     }
@@ -147,8 +148,8 @@ void format_expr(std::ostream &os, Context ctx, std::size_t depth, expr::Expr co
       os << '}';
     }
     void operator()(expr::Lambda const &l) {
-      os << '|' << l.binding->name << ' '
-         << type_name({ctx.ts, ctx.forms, ctx.tags}, l.binding->type_id) << "| ";
+      os << '|' << l.binding->name
+         << " :: " << type_name({ctx.ts, ctx.forms, ctx.tags}, l.binding->type_id) << "| ";
       format_expr(os, ctx, 0, *l.body);
     }
     void operator()(expr::TVLambda const &l) {
