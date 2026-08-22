@@ -10,10 +10,6 @@ import move_only_vector;
 
 export namespace entity {
 
-struct TypeBinding {
-  std::string name;
-};
-
 struct Binding {
   std::string name;
   id::TypeId type_id;
