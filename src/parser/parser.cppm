@@ -3,6 +3,7 @@ module;
 #include <expected>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <string_view>
 #include <unordered_map>
 #include <variant>
@@ -18,15 +19,72 @@ import id;
 import move_only_vector;
 import raw_parser;
 import scope;
+import source;
 import tag;
 import tag_storage;
-import todo;
 import type;
 import type_storage;
 
 namespace parser {
 
-struct ParseError {};
+struct NotFound {
+  friend std::ostream &operator<<(std::ostream &os, NotFound const &e) {
+    return os << "Name not found: \"" << e.name << "\" at " << e.range << ".\n";
+  }
+
+  source::Range range;
+  std::string_view name;
+};
+
+// TODO: more info can be added here.
+// Tell the user what was actually found and what was expected.
+struct UnexpectedEntry {
+  friend std::ostream &operator<<(std::ostream &os, UnexpectedEntry const &e) {
+    return os << "Unexpected scope entry at " << e.range << ".\n";
+  }
+
+  source::Range range;
+};
+
+// TODO: Errors like this could show you where the other name is.
+struct NameAlreadyDefined {
+  friend std::ostream &operator<<(std::ostream &os, NameAlreadyDefined const &e) {
+    return os << "Name alreadty defined: \"" << e.name << "\" at " << e.range << ".\n";
+  }
+
+  source::Range range;
+  std::string_view name;
+};
+
+struct DuplicatePackPatternName {
+  friend std::ostream &operator<<(std::ostream &os, DuplicatePackPatternName const &e) {
+    return os << "Pack pattern introduces the same name multiple times: \"" << e.name << "\" at "
+              << e.range << ".\n";
+  }
+
+  source::Range range;
+  std::string_view name;
+};
+
+struct DuplicatePackTag {
+  friend std::ostream &operator<<(std::ostream &os, DuplicatePackTag const &e) {
+    return os << "Duplicate tag in a pack: \"" << e.name << "\" at " << e.range << ".\n";
+  }
+
+  source::Range range;
+  std::string_view name;
+};
+
+using ParseErrorBase = std::variant<raw_parser::ParseError, NotFound, UnexpectedEntry,
+                                    NameAlreadyDefined, DuplicatePackPatternName, DuplicatePackTag>;
+
+struct ParseError : ParseErrorBase {
+  using ParseErrorBase::ParseErrorBase;
+
+  friend std::ostream &operator<<(std::ostream &os, ParseError const &e) {
+    return std::visit([&](auto &x) -> std::ostream & { return os << x; }, e);
+  }
+};
 
 namespace {
 
@@ -127,7 +185,10 @@ std::expected<type::Type, ParseError>
 parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcept {
   auto scope_entry = ctx.scope.lookup(ref.name);
   if (not scope_entry) {
-    todo();
+    return std::unexpected(NotFound{
+        .range = ref.range,
+        .name = ref.name,
+    });
   }
 
   if (auto *form = std::get_if<scope::TypeDefinition>(&*scope_entry)) {
@@ -137,7 +198,9 @@ parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcep
     return type::DeBruijnIndex{.value = ctx.type_binding_depth - 1 - type_binding->absolute_index};
   }
 
-  todo();
+  return std::unexpected(UnexpectedEntry{
+      .range = ref.range,
+  });
 }
 
 std::expected<id::TypeId, ParseError> parse_typey(Context &ctx, ast::type::Type type) noexcept {
@@ -176,13 +239,28 @@ Result<expr::pattern::Pack> parse_pattern(Context &ctx, ast::pattern::Pack pack)
   move_only_vector<expr::pattern::TaggedValue> tagged_values;
 
   for (auto &tagged_value : pack.tagged_values) {
+    auto const range = tagged_value.tag_range;
+    auto const tag = tagged_value.tag;
+
     TRY_DEF(result, parse_pattern(ctx, std::move(tagged_value)));
     auto [new_names, parsed_tagged_value] = *std::move(result);
     for (auto [name, scope_entry] : new_names) {
       if (names.contains(name)) {
-        todo();
+        return std::unexpected(DuplicatePackPatternName{
+            .range = range,
+            .name = name,
+        });
       }
       names.insert({name, scope_entry});
+    }
+
+    for (auto &[tag_id, _] : tagged_values) {
+      if (tag_id == parsed_tagged_value.tag_id) {
+        return std::unexpected(DuplicatePackTag{
+            .range = range,
+            .name = tag,
+        });
+      }
     }
     tagged_values.push_back(std::move(parsed_tagged_value));
   }
@@ -203,7 +281,7 @@ Result<expr::pattern::Binding> parse_pattern(Context &ctx, ast::pattern::Binding
   };
 
   std::unordered_map<std::string_view, scope::Entry> names;
-  names.insert({parsed_binding.binding->name, scope::Binding{*parsed_binding.binding}});
+  names.insert({binding.name, scope::Binding{*parsed_binding.binding}});
 
   return std::make_pair(std::move(names), std::move(parsed_binding));
 }
@@ -295,8 +373,18 @@ std::expected<expr::Pack, ParseError> parse_expr(Context &ctx, ast::expr::Pack p
   move_only_vector<expr::TaggedValue> tagged_values;
   for (auto &tagged_value : pack.tagged_values) {
     TRY_DEF(value, parse_expry(ctx, std::move(*tagged_value.value)));
+
+    auto const new_tag_id = ctx.tags.get_tag(tagged_value.tag);
+    for (auto &[tag_id, _] : tagged_values) {
+      if (tag_id == new_tag_id) {
+        return std::unexpected(DuplicatePackTag{
+            .range = tagged_value.tag_range,
+            .name = tagged_value.tag,
+        });
+      }
+    }
     tagged_values.push_back({
-        .tag_id = ctx.tags.get_tag(tagged_value.tag),
+        .tag_id = new_tag_id,
         .value = std::make_unique<expr::Expr>(*std::move(value)),
     });
   }
@@ -341,7 +429,10 @@ std::expected<expr::Expr, ParseError> parse_expr(Context &ctx,
                                                  ast::expr::ValueOrBindingReference ref) noexcept {
   auto scope_entry = ctx.scope.lookup(ref.name);
   if (not scope_entry) {
-    todo();
+    return std::unexpected(NotFound{
+        .range = ref.range,
+        .name = ref.name,
+    });
   }
 
   if (auto *value = std::get_if<scope::Value>(&*scope_entry)) {
@@ -351,7 +442,9 @@ std::expected<expr::Expr, ParseError> parse_expr(Context &ctx,
     return expr::BindingReference{.binding = binding->binding};
   }
 
-  todo();
+  return std::unexpected(UnexpectedEntry{
+      .range = ref.range,
+  });
 }
 
 std::expected<expr::Expr, ParseError> parse_expry(Context &ctx, ast::expr::Expr expr) noexcept {
@@ -423,17 +516,6 @@ parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept 
 
 } // namespace entityy
 
-ast::kind::Kind infer_kind(ast::entity::TypeDefinition const &form) {
-  ast::kind::Kind kind = ast::kind::Type{};
-  for (auto it = form.type_bindings.rbegin(); it != form.type_bindings.rend(); ++it) {
-    kind = ast::kind::Arrow{
-        .from = std::make_unique<ast::kind::Kind>(it->kind.clone()),
-        .to = std::make_unique<ast::kind::Kind>(std::move(kind)),
-    };
-  }
-  return kind;
-}
-
 } // namespace
 
 export struct ResolvedAST {
@@ -443,7 +525,7 @@ export struct ResolvedAST {
   move_only_vector<entity::ValueDefinition<expr::Expr>> values;
 };
 
-export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view view) noexcept {
+export std::expected<ResolvedAST, ParseError> parse(std::string_view view) noexcept {
   TRY_DEF(entities_result, raw_parser::parse(view));
   auto &entities = *entities_result;
 
@@ -451,37 +533,41 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
   std::size_t form_count = 0;
   std::size_t value_count = 0;
 
-  move_only_vector<std::unique_ptr<ast::kind::Kind>> kind_storage;
-
   for (auto &entity : entities) {
     struct Visitor {
-      void operator()(ast::entity::TypeDefinition const &form) {
-        kind_storage.push_back(std::make_unique<ast::kind::Kind>(infer_kind(form)));
+      std::expected<void, ParseError> operator()(ast::entity::TypeDefinition const &form) {
         auto [_, did_insert] = names.insert({
             form.name,
             scope::TypeDefinition{.form_id = id::FormId{form_count++}},
         });
         if (not did_insert) {
-          todo();
+          return std::unexpected(NameAlreadyDefined{
+              .range = form.name_range,
+              .name = form.name,
+          });
         }
+        return {};
       }
-      void operator()(ast::entity::ValueDefinition const &def) {
+      std::expected<void, ParseError> operator()(ast::entity::ValueDefinition const &def) {
         auto [_, did_insert] = names.insert({
             def.name,
             scope::Value{.value_id = id::ValueId{value_count++}},
         });
         if (not did_insert) {
-          todo();
+          return std::unexpected(NameAlreadyDefined{
+              .range = def.name_range,
+              .name = def.name,
+          });
         }
+        return {};
       }
 
       std::size_t &form_count;
       std::size_t &value_count;
       std::unordered_map<std::string_view, scope::Entry> &names;
-      move_only_vector<std::unique_ptr<ast::kind::Kind>> &kind_storage;
     };
 
-    std::visit(Visitor{form_count, value_count, names, kind_storage}, entity);
+    TRY(std::visit(Visitor{form_count, value_count, names}, entity));
   }
 
   type_storage::TypeStorage ts;
@@ -495,19 +581,15 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
 
   for (auto &entity : entities) {
     struct Visitor {
-      void operator()(ast::entity::TypeDefinition form) {
-        auto result = entityy::parse_type_definition(ctx, std::move(form));
-        if (not result) {
-          todo();
-        }
+      std::expected<void, ParseError> operator()(ast::entity::TypeDefinition form) {
+        TRY_DEF(result, entityy::parse_type_definition(ctx, std::move(form)));
         forms.push_back(*std::move(result));
+        return {};
       }
-      void operator()(ast::entity::ValueDefinition def) {
-        auto result = entityy::parse_value_definition(ctx, std::move(def));
-        if (not result) {
-          todo();
-        }
+      std::expected<void, ParseError> operator()(ast::entity::ValueDefinition def) {
+        TRY_DEF(result, entityy::parse_value_definition(ctx, std::move(def)));
         values.push_back(*std::move(result));
+        return {};
       }
 
       move_only_vector<entity::TypeDefinition> &forms;
@@ -515,7 +597,7 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
       Context &ctx;
     };
 
-    std::visit(Visitor{forms, values, ctx}, std::move(entity));
+    TRY(std::visit(Visitor{forms, values, ctx}, std::move(entity)));
   }
 
   return ResolvedAST{

@@ -8,6 +8,7 @@ module;
 export module ast;
 
 import move_only_vector;
+import source;
 
 export namespace ast {
 
@@ -82,6 +83,7 @@ struct Application {
 };
 
 struct NamedTypeOrTypeBindingReference {
+  source::Range range;
   std::string_view name;
 };
 
@@ -104,6 +106,7 @@ namespace pattern {
 struct Pattern;
 
 struct TaggedValue {
+  source::Range tag_range;
   std::string_view tag;
   std::unique_ptr<Pattern> value;
 };
@@ -143,6 +146,7 @@ struct Case {
 };
 
 struct TaggedValue {
+  source::Range tag_range;
   std::string_view tag;
   std::unique_ptr<Expr> value;
 };
@@ -172,11 +176,12 @@ struct Instantiation {
 };
 
 struct ValueOrBindingReference {
+  source::Range range;
   std::string_view name;
 };
 
-using ExprBase =
-    std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda, Instantiation, ValueOrBindingReference>;
+using ExprBase = std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda, Instantiation,
+                              ValueOrBindingReference>;
 
 struct Expr : ExprBase {
   using ExprBase::ExprBase;
@@ -187,6 +192,7 @@ struct Expr : ExprBase {
 namespace entity {
 
 struct TypeDefinition {
+  source::Range name_range;
   std::string_view name;
   move_only_vector<type::Binding> type_bindings;
   type::Type type;
@@ -194,6 +200,7 @@ struct TypeDefinition {
 
 struct ValueDefinition {
   std::optional<type::Type> type;
+  source::Range name_range;
   std::string_view name;
   move_only_vector<type::Binding> type_bindings;
   move_only_vector<expr::Binding> bindings;

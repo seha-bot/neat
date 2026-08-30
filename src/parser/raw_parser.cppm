@@ -300,7 +300,10 @@ std::expected<ast::type::Application, ParseError> parse_application(Parser &pars
 std::expected<ast::type::NamedTypeOrTypeBindingReference, ParseError>
 parse_named_type_reference(Parser &parser) noexcept {
   TRY_DEF(name, parser.expect<token::Type::id>());
-  return ast::type::NamedTypeOrTypeBindingReference{.name = name->view};
+  return ast::type::NamedTypeOrTypeBindingReference{
+      .range = name->range,
+      .name = name->view,
+  };
 }
 
 std::expected<ast::type::Union, ParseError> parse_union(Parser &parser) noexcept {
@@ -359,11 +362,13 @@ std::expected<ast::pattern::TaggedValue, ParseError> parse_tagged_value(Parser &
   TRY_DEF(tag, cut(parser.expect<token::Type::id>().transform_error(perr)));
   if (auto value = parse_pattern(parser)) {
     return ast::pattern::TaggedValue{
+        .tag_range = tag->range,
         .tag = tag->view,
         .value = std::make_unique<ast::pattern::Pattern>(*std::move(value)),
     };
   } else {
     return ast::pattern::TaggedValue{
+        .tag_range = tag->range,
         .tag = tag->view,
         .value = std::make_unique<ast::pattern::Pattern>(ast::pattern::Pack{}),
     };
@@ -388,6 +393,7 @@ std::expected<ast::pattern::Pack, ParseError> parse_pack(Parser &parser) noexcep
       TRY_DEF(value, parse_pattern(parser));
 
       tagged_values.push_back({
+          .tag_range = tag->range,
           .tag = tag->view,
           .value = std::make_unique<ast::pattern::Pattern>(*std::move(value)),
       });
@@ -406,7 +412,8 @@ std::expected<ast::pattern::Binding, ParseError> parse_binding(Parser &parser) n
 }
 
 std::expected<ast::pattern::Pattern, ParseError> parse_pattern(Parser &parser) noexcept {
-  return parse_any<ast::pattern::Pattern>(parser, parse_tagged_value, parse_pack, parse_binding, parenthesized(parse_pattern));
+  return parse_any<ast::pattern::Pattern>(parser, parse_tagged_value, parse_pack, parse_binding,
+                                          parenthesized(parse_pattern));
 }
 
 } // namespace pattern
@@ -485,11 +492,13 @@ std::expected<ast::expr::TaggedValue, ParseError> parse_tagged_value(Parser &par
   TRY_DEF(tag, cut(parser.expect<token::Type::id>().transform_error(perr)));
   if (auto value = parse_expr(parser)) {
     return ast::expr::TaggedValue{
+        .tag_range = tag->range,
         .tag = tag->view,
         .value = std::make_unique<ast::expr::Expr>(*std::move(value)),
     };
   } else {
     return ast::expr::TaggedValue{
+        .tag_range = tag->range,
         .tag = tag->view,
         .value = std::make_unique<ast::expr::Expr>(ast::expr::Pack{}),
     };
@@ -513,6 +522,7 @@ std::expected<ast::expr::Pack, ParseError> parse_pack(Parser &parser) noexcept {
       TRY_DEF(value, parse_expr(parser));
 
       tagged_values.push_back({
+          .tag_range = tag->range,
           .tag = tag->view,
           .value = std::make_unique<ast::expr::Expr>(*std::move(value)),
       });
@@ -579,7 +589,10 @@ std::expected<ast::expr::TVLambda, ParseError> parse_tv_lambda(Parser &parser) n
 std::expected<ast::expr::ValueOrBindingReference, ParseError>
 parse_value_or_binding_reference(Parser &parser) noexcept {
   TRY_DEF(name, parser.expect<token::Type::id>());
-  return ast::expr::ValueOrBindingReference{.name = name->view};
+  return ast::expr::ValueOrBindingReference{
+      .range = name->range,
+      .name = name->view,
+  };
 }
 
 std::expected<ast::expr::Expr, ParseError> parse_primary_expr(Parser &parser) noexcept {
@@ -653,6 +666,7 @@ parse_type_definition(Parser &parser) noexcept {
     TRY_DEF(type, type::parse_type(parser));
 
     return ast::entity::TypeDefinition{
+        .name_range = definition_name->range,
         .name = definition_name->view,
         .type_bindings = std::move(type_bindings),
         .type = *std::move(type),
@@ -736,6 +750,7 @@ parse_value_definition(Parser &parser) noexcept {
 
     return ast::entity::ValueDefinition{
         .type = dec.transform([](auto &p) { return std::move(p.second); }),
+        .name_range = name->range,
         .name = name->view,
         .type_bindings = std::move(type_bindings),
         .bindings = std::move(bindings),

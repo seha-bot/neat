@@ -1,29 +1,14 @@
 module;
 
 #include <cstddef>
-#include <ostream>
+#include <optional>
 #include <string_view>
 
 export module token;
 
+import source;
+
 namespace token {
-
-export struct SourcePosition {
-  friend std::ostream &operator<<(std::ostream &os, SourcePosition const &sl) {
-    return os << sl.line << ':' << sl.col;
-  }
-
-  std::size_t line, col;
-};
-
-export struct SourceRange {
-  friend std::ostream &operator<<(std::ostream &os, SourceRange const &sr) {
-    return os << '[' << sr.first << ',' << sr.last << ']';
-  }
-
-  SourcePosition first;
-  SourcePosition last;
-};
 
 export enum class Type : unsigned char {
   /// The last token. Ever.
@@ -96,12 +81,12 @@ export constexpr std::string_view type_to_string(Type type) noexcept {
 
 export struct Token {
   std::string_view view;
-  SourceRange range;
+  source::Range range;
   Type type;
 };
 
 export struct Checkpoint {
-  token::SourcePosition pos;
+  source::Position pos;
   std::size_t index;
 };
 
@@ -192,7 +177,7 @@ private:
   }
 
   std::string_view m_view;
-  token::SourcePosition m_pos;
+  source::Position m_pos;
   std::size_t m_index;
 };
 

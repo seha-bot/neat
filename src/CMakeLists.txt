@@ -16,6 +16,7 @@ target_sources(neat_lib
       parser/parser.cppm
       parser/raw_parser.cppm
       parser/scope.cppm
+      parser/source.cppm
       parser/tag_storage.cppm
       parser/token.cppm
       typechecker/constraint.cppm
