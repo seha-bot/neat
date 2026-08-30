@@ -3,14 +3,12 @@ module;
 #include <algorithm>
 #include <optional>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 
 export module type_storage;
 
 import id;
 import move_only_vector;
-import todo;
 import type;
 
 export namespace type_storage {
@@ -35,12 +33,7 @@ public:
 
 private:
   Map::iterator representative_iterator(id::TypeId a) {
-    std::unordered_set<id::TypeId, Hasher, Eq> seen;
     while (true) {
-      if (not seen.insert(a).second) {
-        todo();
-      }
-
       auto [it, _] = m_root.insert({a, a});
       auto &a_parent = it->second;
       if (a_parent.value == a.value) {
