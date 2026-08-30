@@ -128,7 +128,8 @@ namespace expr {
 struct Expr;
 
 struct Application {
-  std::unique_ptr<Expr> function, argument;
+  std::unique_ptr<Expr> function;
+  std::unique_ptr<Expr> argument;
 };
 
 struct Choice {
@@ -165,12 +166,17 @@ struct TVLambda {
   std::unique_ptr<Expr> body;
 };
 
+struct Instantiation {
+  std::unique_ptr<Expr> function;
+  type::Type argument;
+};
+
 struct ValueOrBindingReference {
   std::string_view name;
 };
 
 using ExprBase =
-    std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda, ValueOrBindingReference>;
+    std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda, Instantiation, ValueOrBindingReference>;
 
 struct Expr : ExprBase {
   using ExprBase::ExprBase;

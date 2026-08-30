@@ -18,7 +18,6 @@ import id;
 export namespace scope {
 
 struct TypeBinding {
-  ast::kind::Kind const *kind;
   std::size_t absolute_index;
 };
 
@@ -27,7 +26,6 @@ struct Binding {
 };
 
 struct TypeDefinition {
-  ast::kind::Kind const *kind;
   id::FormId form_id;
 };
 

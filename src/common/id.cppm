@@ -9,6 +9,7 @@ export namespace id {
 
 enum class Domain {
   form,
+  kind,
   tag,
   type,
   value,
@@ -21,6 +22,10 @@ template <Domain D> struct Id {
 
 struct FormId : Id<Domain::form> {
   bool operator==(FormId const &id) const { return value == id.value; }
+};
+
+struct KindId : Id<Domain::kind> {
+  bool operator==(KindId const &id) const { return value == id.value; }
 };
 
 struct ValueId : Id<Domain::value> {

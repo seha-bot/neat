@@ -21,6 +21,7 @@ import formatter;
 import id;
 import move_only_vector;
 import tag;
+import todo;
 import type;
 import type_storage;
 import typed_expr;
@@ -51,7 +52,7 @@ typed_expr::Expr get_type(Context &ctx, expr::Expr expr) noexcept {
       // Variable generation can be optimized here.
       // If function.type_id() is an arrow, reuse it.
       // If function.type_id() is a variable, merge it with an invented arrow.
-      id::TypeId const from_id = ctx.ts.make_variable();
+      id::TypeId const from_id = argument.type_id();
       id::TypeId const to_id = ctx.ts.make_variable();
       auto invented_function_type_id = ctx.ts.store_new(type::Arrow{from_id, to_id});
       ctx.solver.add_constraint(constraint::SubtypeOf{
@@ -63,17 +64,10 @@ typed_expr::Expr get_type(Context &ctx, expr::Expr expr) noexcept {
           std::make_unique<typed_expr::Expr>(std::move(function)),
       };
 
-      ctx.solver.add_constraint(constraint::SubtypeOf{
-          argument.type_id(),
-          from_id,
-      });
       return typed_expr::Application{
           {to_id},
           std::make_unique<typed_expr::Expr>(std::move(invented_function)),
-          std::make_unique<typed_expr::Expr>(typed_expr::Conversion{
-              {from_id},
-              std::make_unique<typed_expr::Expr>(std::move(argument)),
-          }),
+          std::make_unique<typed_expr::Expr>(std::move(argument)),
       };
     }
     typed_expr::Expr operator()(expr::Case case_) {
@@ -153,8 +147,23 @@ typed_expr::Expr get_type(Context &ctx, expr::Expr expr) noexcept {
     }
     typed_expr::Expr operator()(expr::TVLambda tv_lambda) {
       auto body = get_type(ctx, std::move(*tv_lambda.body));
-      auto const type_id = ctx.ts.store(type::ForAll{body.type_id()});
+      auto const type_id = ctx.ts.store(type::ForAll{
+          .binding_kind_id = tv_lambda.binding_kind_id,
+          .type_id = body.type_id(),
+      });
       return typed_expr::TVLambda{{type_id}, std::make_unique<typed_expr::Expr>(std::move(body))};
+    }
+    typed_expr::Expr operator()(expr::Instantiation instantiation) {
+      auto function = get_type(ctx, std::move(*instantiation.function));
+      return std::visit(
+          [&](auto x) -> typed_expr::Expr {
+            x.type_id = ctx.ts.store(type::Application{
+                .function_id = x.type_id,
+                .argument_id = instantiation.argument_id,
+            });
+            return x;
+          },
+          std::move(function));
     }
     typed_expr::Expr operator()(expr::ValueReference value_ref) {
       auto const type_id = ctx.env.type_of_value.at(value_ref.value_id);
@@ -208,14 +217,13 @@ typecheck(type_storage::TypeStorage &ts, move_only_vector<tag::Tag> const &tags,
   for (std::size_t i = 0; i < values.size(); ++i) {
     auto &value = values[i];
 
-    constraint::Solver solver;
+    constraint::Solver solver{ts};
 
     Context ctx{ts, solver, env};
     auto var_id = ts.make_variable();
     env.memoize(id::ValueId{{.value = i}}, var_id);
     auto typed_value = typecheck_value(ctx, std::move(value));
-    solver.add_constraint(constraint::SubtypeOf{var_id, *typed_value.type_id});
-    solver.add_constraint(constraint::SubtypeOf{*typed_value.type_id, var_id});
+    ts.merge_into(var_id, *typed_value.type_id);
 
     std::cout << typed_value.name << " : "
               << formatter::type_name({ts, forms, tags}, *typed_value.type_id) << '\n';
@@ -223,10 +231,10 @@ typecheck(type_storage::TypeStorage &ts, move_only_vector<tag::Tag> const &tags,
     solver.solve(
         std::cout,
         [&](std::ostream &os, id::TypeId id) { os << formatter::type_name({ts, forms, tags}, id); },
-        forms, ts);
+        forms);
     std::cout << "DONE.\n";
     std::cout << typed_value.name << " : "
-              << formatter::type_name({ts, forms, tags}, *typed_value.type_id) << '\n';
+              << formatter::type_name({ts, forms, tags}, *typed_value.type_id) << "\n\n";
 
     typed_entities.push_back(std::move(typed_value));
   }

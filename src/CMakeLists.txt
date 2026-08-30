@@ -19,6 +19,7 @@ target_sources(neat_lib
       parser/tag_storage.cppm
       parser/token.cppm
       typechecker/constraint.cppm
+      typechecker/kindchecker.cppm
       typechecker/typechecker.cppm
       typechecker/typed_expr.cppm
   PUBLIC

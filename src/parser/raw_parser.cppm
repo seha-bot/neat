@@ -349,7 +349,7 @@ std::expected<ast::type::Type, ParseError> parse_type(Parser &parser) noexcept {
 // pack_step := id "=" pattern ("," pack_step | "}") | "}"
 // pack := "{" ! pack_step
 // binding := id
-// pattern := tagged_value | pack | binding
+// pattern := tagged_value | pack | binding | "(" pattern ")"
 namespace pattern {
 
 std::expected<ast::pattern::Pattern, ParseError> parse_pattern(Parser &parser) noexcept;
@@ -406,13 +406,13 @@ std::expected<ast::pattern::Binding, ParseError> parse_binding(Parser &parser) n
 }
 
 std::expected<ast::pattern::Pattern, ParseError> parse_pattern(Parser &parser) noexcept {
-  return parse_any<ast::pattern::Pattern>(parser, parse_tagged_value, parse_pack, parse_binding);
+  return parse_any<ast::pattern::Pattern>(parser, parse_tagged_value, parse_pack, parse_binding, parenthesized(parse_pattern));
 }
 
 } // namespace pattern
 
 // This is left-associative.
-// app := primary_expr (primary_expr)+
+// app := splice_expr (splice_expr)+
 // case_step := pattern "->" expr ("," case_step | "}") | "}"
 // case := "case" ! expr "of" "{" case_step
 // tagged_value := ":" ! (id expr | id)
@@ -423,20 +423,21 @@ std::expected<ast::pattern::Pattern, ParseError> parse_pattern(Parser &parser) n
 // tv_lambda := "[" ! (id "::" kind | id) "]" expr
 // ref := id
 // primary_expr := case | tagged_value | pack | lambda | tv_lambda | ref | "(" expr ")"
-// expr := app | primary_expr
+// splice_expr := primary_expr ("[:" type ":]")+ | primary_expr
+// expr := app | splice_expr
 namespace expr {
 
-std::expected<ast::expr::Expr, ParseError> parse_primary_expr(Parser &parser) noexcept;
+std::expected<ast::expr::Expr, ParseError> parse_splice_expr(Parser &parser) noexcept;
 std::expected<ast::expr::Expr, ParseError> parse_expr(Parser &parser) noexcept;
 
 std::expected<ast::expr::Application, ParseError> parse_application(Parser &parser) noexcept {
-  TRY_DEF(function, parse_primary_expr(parser));
-  TRY_DEF(argument, parse_primary_expr(parser));
+  TRY_DEF(function, parse_splice_expr(parser));
+  TRY_DEF(argument, parse_splice_expr(parser));
   ast::expr::Application app{
       .function = std::make_unique<ast::expr::Expr>(*std::move(function)),
       .argument = std::make_unique<ast::expr::Expr>(*std::move(argument)),
   };
-  while (auto next_argument = parse_primary_expr(parser)) {
+  while (auto next_argument = parse_splice_expr(parser)) {
     app = ast::expr::Application{
         .function = std::make_unique<ast::expr::Expr>(std::move(app)),
         .argument = std::make_unique<ast::expr::Expr>(*std::move(next_argument)),
@@ -587,8 +588,22 @@ std::expected<ast::expr::Expr, ParseError> parse_primary_expr(Parser &parser) no
                                     parenthesized(parse_expr));
 }
 
+std::expected<ast::expr::Expr, ParseError> parse_splice_expr(Parser &parser) noexcept {
+  TRY_DEF(parsed_expr, parse_primary_expr(parser));
+  ast::expr::Expr expr = *std::move(parsed_expr);
+  while (auto next_splice = parser.expect<token::Type::left_splice>()) {
+    TRY_DEF(type, type::parse_type(parser));
+    expr = ast::expr::Instantiation{
+        .function = std::make_unique<ast::expr::Expr>(std::move(expr)),
+        .argument = *std::move(type),
+    };
+    TRY(parser.expect<token::Type::right_splice>());
+  }
+  return expr;
+}
+
 std::expected<ast::expr::Expr, ParseError> parse_expr(Parser &parser) noexcept {
-  return parse_any<ast::expr::Expr>(parser, parse_application, parse_primary_expr);
+  return parse_any<ast::expr::Expr>(parser, parse_application, parse_splice_expr);
 }
 
 } // namespace expr

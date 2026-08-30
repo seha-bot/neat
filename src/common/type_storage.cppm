@@ -1,10 +1,10 @@
 module;
 
 #include <algorithm>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
-#include <vector>
 
 export module type_storage;
 
@@ -77,6 +77,12 @@ struct TypeStorage {
     return id::VariableId{id};
   }
 
+  [[nodiscard]] id::TypeId make_rigid_variable() {
+    id::TypeId id{m_types.size()};
+    m_types.push_back(type::RigidVariable{});
+    return id;
+  }
+
   [[nodiscard]] id::TypeId store_new(type::Type type) {
     id::TypeId id{m_types.size()};
     m_types.push_back(std::move(type));
@@ -96,6 +102,14 @@ struct TypeStorage {
     return read_exact(m_rep.representative(id));
   }
 
+  [[nodiscard]] std::optional<id::VariableId> is_variable(id::TypeId id) const {
+    if (std::holds_alternative<type::Variable>(read(id))) {
+      return id::VariableId{id};
+    } else {
+      return std::nullopt;
+    }
+  }
+
   [[nodiscard]] bool equal(id::TypeId a_id, id::TypeId b_id) const {
     auto const a_rep_id = m_rep.representative(a_id);
     auto const b_rep_id = m_rep.representative(b_id);
@@ -113,6 +127,16 @@ struct TypeStorage {
     return instantiate_impl(type_id, subst_id, 0);
   }
 
+  [[nodiscard]] id::KindId store_kind(kind::Kind kind) noexcept {
+    id::KindId id{m_kinds.size()};
+    m_kinds.push_back(std::move(kind));
+    return id;
+  }
+
+  [[nodiscard]] kind::Kind const &read_kind(id::KindId kind_id) const noexcept {
+    return m_kinds.at(kind_id.value);
+  }
+
 private:
   id::TypeId instantiate_impl(id::TypeId type_id, id::TypeId subst_id, std::size_t depth) {
     struct Visitor {
@@ -123,7 +147,10 @@ private:
         });
       }
       id::TypeId operator()(type::ForAll forall) {
-        return ts.store(type::ForAll{ts.instantiate_impl(forall.type_id, subst_id, depth + 1)});
+        return ts.store(type::ForAll{
+            .binding_kind_id = forall.binding_kind_id,
+            .type_id = ts.instantiate_impl(forall.type_id, subst_id, depth + 1),
+        });
       }
       id::TypeId operator()(type::DeBruijnIndex index) {
         return index.value == depth ? subst_id : type_id;
@@ -152,6 +179,7 @@ private:
       }
       id::TypeId operator()(type::TTLambda tt_lambda) {
         return ts.store(type::TTLambda{
+            .binding_kind_id = tt_lambda.binding_kind_id,
             .type_id = ts.instantiate_impl(tt_lambda.type_id, subst_id, depth + 1),
         });
       }
@@ -162,6 +190,7 @@ private:
         });
       }
       id::TypeId operator()(type::Variable const &) { return type_id; }
+      id::TypeId operator()(type::RigidVariable const &) { return type_id; }
       id::TypeId operator()(type::NamedTypeReference const &) { return type_id; }
 
       TypeStorage &ts;
@@ -214,6 +243,7 @@ private:
     bool operator()(type::TTLambda const &, auto &) { return false; }
     bool operator()(type::Application const &, auto &) { return false; }
     bool operator()(type::Variable const &, auto &) { return false; }
+    bool operator()(type::RigidVariable const &, auto &) { return false; }
     bool operator()(type::NamedTypeReference const &, auto &) { return false; }
 
     TypeStorage const &ts;
@@ -234,7 +264,8 @@ private:
   // FIX: MAKE PRIVATE!
 public:
   mutable RepresentativeSets m_rep;
-  std::vector<type::Type> m_types;
+  move_only_vector<type::Type> m_types;
+  move_only_vector<kind::Kind> m_kinds;
 };
 
 } // namespace type_storage

@@ -40,6 +40,8 @@ export enum class Type : unsigned char {
   pipe,
   has_type,
   comma,
+  left_splice,
+  right_splice,
   colon,
   left_paren,
   right_paren,
@@ -58,22 +60,23 @@ struct TypeInfo {
 
 /// It is important that this is in the same order as the enumerators in Type.
 constexpr TypeInfo info[] = {
-    {Type::end, "end"},        {Type::id, "id"},           {Type::comment, "#"},
-    {Type::form, "form"},      {Type::dec, "dec"},         {Type::def, "def"},
-    {Type::equal, "="},        {Type::arrow, "->"},        {Type::star, "*"},
-    {Type::pipe, "|"},         {Type::has_type, "::"},     {Type::comma, ","},
-    {Type::colon, ":"},        {Type::left_paren, "("},    {Type::right_paren, ")"},
-    {Type::left_bracket, "["}, {Type::right_bracket, "]"}, {Type::left_brace, "{"},
-    {Type::right_brace, "}"},  {Type::case_, "case"},      {Type::of, "of"},
+    {Type::end, "end"},         {Type::id, "id"},           {Type::comment, "#"},
+    {Type::form, "form"},       {Type::dec, "dec"},         {Type::def, "def"},
+    {Type::equal, "="},         {Type::arrow, "->"},        {Type::star, "*"},
+    {Type::pipe, "|"},          {Type::has_type, "::"},     {Type::comma, ","},
+    {Type::left_splice, "[:"},  {Type::right_splice, ":]"}, {Type::colon, ":"},
+    {Type::left_paren, "("},    {Type::right_paren, ")"},   {Type::left_bracket, "["},
+    {Type::right_bracket, "]"}, {Type::left_brace, "{"},    {Type::right_brace, "}"},
+    {Type::case_, "case"},      {Type::of, "of"},
 };
 
 /// These tokens are capable of separating other tokens.
 /// For example: a|a is tokenized as id, pipe, id.
 /// It is important that longer ones come before shorter ones if they're contained in one another.
 constexpr Type separators[] = {
-    Type::equal,         Type::arrow,      Type::star,        Type::pipe,        Type::has_type,
-    Type::comma,         Type::colon,      Type::left_paren,  Type::right_paren, Type::left_bracket,
-    Type::right_bracket, Type::left_brace, Type::right_brace,
+    Type::equal,       Type::arrow,        Type::star,          Type::pipe,       Type::has_type,
+    Type::comma,       Type::left_splice,  Type::right_splice,  Type::colon,      Type::left_paren,
+    Type::right_paren, Type::left_bracket, Type::right_bracket, Type::left_brace, Type::right_brace,
 };
 
 [[nodiscard]] constexpr Type parse_type(std::string_view view) noexcept {

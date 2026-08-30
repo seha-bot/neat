@@ -66,7 +66,13 @@ struct Lambda {
 };
 
 struct TVLambda {
+  id::KindId binding_kind_id;
   std::unique_ptr<Expr> body;
+};
+
+struct Instantiation {
+  std::unique_ptr<Expr> function;
+  id::TypeId argument_id;
 };
 
 struct ValueReference {
@@ -77,7 +83,7 @@ struct BindingReference {
   std::reference_wrapper<entity::Binding const> binding;
 };
 
-using ExprBase = std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda,
+using ExprBase = std::variant<Application, Case, TaggedValue, Pack, Lambda, TVLambda, Instantiation,
                               ValueReference, BindingReference>;
 struct Expr : ExprBase {
   using ExprBase::ExprBase;

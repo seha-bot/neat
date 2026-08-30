@@ -33,7 +33,7 @@ namespace {
 struct Context {
   Context with_type_binding(ast::type::Binding const &type_binding) const {
     std::unordered_map<std::string_view, scope::Entry> names;
-    names.insert({type_binding.name, scope::TypeBinding{&type_binding.kind, type_binding_depth}});
+    names.insert({type_binding.name, scope::TypeBinding{type_binding_depth}});
     return {ts, tags, scope::Scope{std::move(names), &scope}, type_binding_depth + 1};
   }
 
@@ -49,13 +49,29 @@ struct Context {
   std::size_t const type_binding_depth;
 };
 
+id::KindId convert(type_storage::TypeStorage &ts, ast::kind::Kind const &kind) noexcept {
+  struct Visitor {
+    id::KindId operator()(ast::kind::Arrow const &arr) {
+      return ts.store_kind(kind::Arrow{
+          .from_id = convert(ts, *arr.from),
+          .to_id = convert(ts, *arr.to),
+      });
+    }
+    id::KindId operator()(ast::kind::Type) { return ts.store_kind(kind::Type{}); }
+
+    type_storage::TypeStorage &ts;
+  };
+
+  return std::visit(Visitor{ts}, kind);
+}
+
 namespace typey {
 
-std::expected<id::TypeId, ParseError> parse_basic_type(Context &ctx, ast::type::Type type) noexcept;
+std::expected<id::TypeId, ParseError> parse_typey(Context &ctx, ast::type::Type type) noexcept;
 
 std::expected<type::Arrow, ParseError> parse_type(Context &ctx, ast::type::Arrow arr) noexcept {
-  TRY_DEF(from_id, parse_basic_type(ctx, std::move(*arr.from)));
-  TRY_DEF(to_id, parse_basic_type(ctx, std::move(*arr.to)));
+  TRY_DEF(from_id, parse_typey(ctx, std::move(*arr.from)));
+  TRY_DEF(to_id, parse_typey(ctx, std::move(*arr.to)));
   return type::Arrow{
       .from_id = *from_id,
       .to_id = *to_id,
@@ -65,14 +81,17 @@ std::expected<type::Arrow, ParseError> parse_type(Context &ctx, ast::type::Arrow
 std::expected<type::ForAll, ParseError> parse_type(Context &ctx,
                                                    ast::type::ForAll for_all) noexcept {
   auto new_ctx = ctx.with_type_binding(for_all.binding);
-  TRY_DEF(type_id, parse_basic_type(new_ctx, std::move(*for_all.type)));
-  return type::ForAll{.type_id = *type_id};
+  TRY_DEF(type_id, parse_typey(new_ctx, std::move(*for_all.type)));
+  return type::ForAll{
+      .binding_kind_id = convert(ctx.ts, for_all.binding.kind),
+      .type_id = *type_id,
+  };
 }
 
 std::expected<type::Union, ParseError> parse_type(Context &ctx, ast::type::Union union_) noexcept {
   move_only_vector<type::Element> elements;
   for (auto &[tag, type] : union_.elements) {
-    TRY_DEF(type_id, parse_basic_type(ctx, std::move(type)));
+    TRY_DEF(type_id, parse_typey(ctx, std::move(type)));
     elements.push_back({
         .tag_id = ctx.tags.get_tag(tag),
         .type_id = *type_id,
@@ -85,7 +104,7 @@ std::expected<type::Struct, ParseError> parse_type(Context &ctx,
                                                    ast::type::Struct struct_) noexcept {
   move_only_vector<type::Element> elements;
   for (auto &[tag, type] : struct_.elements) {
-    TRY_DEF(type_id, parse_basic_type(ctx, std::move(type)));
+    TRY_DEF(type_id, parse_typey(ctx, std::move(type)));
     elements.push_back({
         .tag_id = ctx.tags.get_tag(tag),
         .type_id = *type_id,
@@ -94,50 +113,17 @@ std::expected<type::Struct, ParseError> parse_type(Context &ctx,
   return type::Struct{.elements = std::move(elements)};
 }
 
-struct KindedTypeId {
-  ast::kind::Kind const *kind;
-  id::TypeId id;
-};
-
-template <typename T> struct Kinded {
-  ast::kind::Kind const *kind;
-  T type;
-};
-
-namespace detail {
-
-template <typename T> void is_kinded(Kinded<T> const &);
-
-template <typename T>
-concept kinded = requires(T &&t) { is_kinded(t); };
-
-} // namespace detail
-
-std::expected<KindedTypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept;
-
-std::expected<Kinded<type::Application>, ParseError>
-parse_type(Context &ctx, ast::type::Application app) noexcept {
-  TRY_DEF(function_id, parse_type(ctx, std::move(*app.function)));
-  auto *arrow = std::get_if<ast::kind::Arrow>(function_id->kind);
-  if (not arrow) {
-    todo();
-  }
-  TRY_DEF(argument_id, parse_type(ctx, std::move(*app.argument)));
-  if (*arrow->from != *argument_id->kind) {
-    todo();
-  }
-
-  return Kinded{
-      .kind = arrow->to.get(),
-      .type =
-          type::Application{
-              .function_id = function_id->id,
-              .argument_id = argument_id->id,
-          },
+std::expected<type::Application, ParseError> parse_type(Context &ctx,
+                                                        ast::type::Application app) noexcept {
+  TRY_DEF(function_id, parse_typey(ctx, std::move(*app.function)));
+  TRY_DEF(argument_id, parse_typey(ctx, std::move(*app.argument)));
+  return type::Application{
+      .function_id = *function_id,
+      .argument_id = *argument_id,
   };
 }
 
-std::expected<Kinded<type::Type>, ParseError>
+std::expected<type::Type, ParseError>
 parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcept {
   auto scope_entry = ctx.scope.lookup(ref.name);
   if (not scope_entry) {
@@ -145,46 +131,19 @@ parse_type(Context &ctx, ast::type::NamedTypeOrTypeBindingReference ref) noexcep
   }
 
   if (auto *form = std::get_if<scope::TypeDefinition>(&*scope_entry)) {
-    return Kinded<type::Type>{
-        form->kind,
-        type::NamedTypeReference{.form_id = form->form_id},
-    };
+    return type::NamedTypeReference{.form_id = form->form_id};
   }
   if (auto *type_binding = std::get_if<scope::TypeBinding>(&*scope_entry)) {
-    return Kinded<type::Type>{
-        type_binding->kind,
-        type::DeBruijnIndex{.value = ctx.type_binding_depth - 1 - type_binding->absolute_index},
-    };
+    return type::DeBruijnIndex{.value = ctx.type_binding_depth - 1 - type_binding->absolute_index};
   }
 
   todo();
 }
 
-static constexpr ast::kind::Kind basic_kind = ast::kind::Type{};
-
-std::expected<id::TypeId, ParseError> parse_basic_type(Context &ctx,
-                                                       ast::type::Type type) noexcept {
-  TRY_DEF(type_id, parse_type(ctx, std::move(type)));
-  if (*type_id->kind != basic_kind) {
-    todo();
-  }
-  return type_id->id;
-}
-
-std::expected<KindedTypeId, ParseError> parse_type(Context &ctx, ast::type::Type type) noexcept {
-  auto visitor = [&](auto a_type) -> std::expected<KindedTypeId, ParseError> {
+std::expected<id::TypeId, ParseError> parse_typey(Context &ctx, ast::type::Type type) noexcept {
+  auto visitor = [&](auto a_type) -> std::expected<id::TypeId, ParseError> {
     TRY_DEF(parsed_type, parse_type(ctx, std::move(a_type)));
-    if constexpr (detail::kinded<decltype(*parsed_type)>) {
-      return KindedTypeId{
-          .kind = parsed_type->kind,
-          .id = ctx.ts.store(std::move(parsed_type->type)),
-      };
-    } else {
-      return KindedTypeId{
-          .kind = &basic_kind,
-          .id = ctx.ts.store(*std::move(parsed_type)),
-      };
-    }
+    return ctx.ts.store(*std::move(parsed_type));
   };
   return std::visit(visitor, std::move(type));
 }
@@ -197,11 +156,11 @@ template <typename T>
 using Result =
     std::expected<std::pair<std::unordered_map<std::string_view, scope::Entry>, T>, ParseError>;
 
-Result<expr::pattern::Pattern> parse_pattern(Context &ctx, ast::pattern::Pattern pattern) noexcept;
+Result<expr::pattern::Pattern> parse_patterny(Context &ctx, ast::pattern::Pattern pattern) noexcept;
 
 Result<expr::pattern::TaggedValue> parse_pattern(Context &ctx,
                                                  ast::pattern::TaggedValue tagged_value) noexcept {
-  TRY_DEF(result, parse_pattern(ctx, std::move(*tagged_value.value)));
+  TRY_DEF(result, parse_patterny(ctx, std::move(*tagged_value.value)));
   auto [names, value] = *std::move(result);
 
   expr::pattern::TaggedValue parsed_tagged_value{
@@ -249,7 +208,8 @@ Result<expr::pattern::Binding> parse_pattern(Context &ctx, ast::pattern::Binding
   return std::make_pair(std::move(names), std::move(parsed_binding));
 }
 
-Result<expr::pattern::Pattern> parse_pattern(Context &ctx, ast::pattern::Pattern pattern) noexcept {
+Result<expr::pattern::Pattern> parse_patterny(Context &ctx,
+                                              ast::pattern::Pattern pattern) noexcept {
   auto visitor = [&](auto a_pattern) -> Result<expr::pattern::Pattern> {
     return parse_pattern(ctx, std::move(a_pattern));
   };
@@ -260,12 +220,17 @@ Result<expr::pattern::Pattern> parse_pattern(Context &ctx, ast::pattern::Pattern
 
 namespace expry {
 
+template <typename T> struct Kinded {
+  ast::kind::Kind const *kind;
+  T expr;
+};
+
 // TODO: This makes you wonder if a binding is an entity or an expression or neither?
 std::expected<entity::Binding, ParseError> parse_binding(Context &ctx,
                                                          ast::expr::Binding binding) noexcept {
   id::TypeId type_id;
   if (binding.type) {
-    TRY_DEF(parsed_type_id, typey::parse_basic_type(ctx, *std::move(binding.type)));
+    TRY_DEF(parsed_type_id, typey::parse_typey(ctx, *std::move(binding.type)));
     type_id = *parsed_type_id;
   } else {
     type_id = ctx.ts.make_variable();
@@ -277,12 +242,12 @@ std::expected<entity::Binding, ParseError> parse_binding(Context &ctx,
   };
 }
 
-std::expected<expr::Expr, ParseError> parse_expr(Context &ctx, ast::expr::Expr expr) noexcept;
+std::expected<expr::Expr, ParseError> parse_expry(Context &ctx, ast::expr::Expr expr) noexcept;
 
 std::expected<expr::Application, ParseError> parse_expr(Context &ctx,
                                                         ast::expr::Application app) noexcept {
-  TRY_DEF(function, parse_expr(ctx, std::move(*app.function)));
-  TRY_DEF(argument, parse_expr(ctx, std::move(*app.argument)));
+  TRY_DEF(function, parse_expry(ctx, std::move(*app.function)));
+  TRY_DEF(argument, parse_expry(ctx, std::move(*app.argument)));
   return expr::Application{
       .function = std::make_unique<expr::Expr>(*std::move(function)),
       .argument = std::make_unique<expr::Expr>(*std::move(argument)),
@@ -290,11 +255,11 @@ std::expected<expr::Application, ParseError> parse_expr(Context &ctx,
 }
 
 std::expected<expr::Case, ParseError> parse_expr(Context &ctx, ast::expr::Case case_) noexcept {
-  TRY_DEF(scrutinee, parse_expr(ctx, std::move(*case_.scrutinee)));
+  TRY_DEF(scrutinee, parse_expry(ctx, std::move(*case_.scrutinee)));
 
   move_only_vector<expr::Choice> choices;
   for (auto &[pattern, result] : case_.choices) {
-    TRY_DEF(parsed_pattern_with_names, patterny::parse_pattern(ctx, std::move(pattern)));
+    TRY_DEF(parsed_pattern_with_names, patterny::parse_patterny(ctx, std::move(pattern)));
     auto [names, parsed_pattern] = *std::move(parsed_pattern_with_names);
 
     Context new_ctx{
@@ -304,7 +269,7 @@ std::expected<expr::Case, ParseError> parse_expr(Context &ctx, ast::expr::Case c
         .type_binding_depth = ctx.type_binding_depth,
     };
 
-    TRY_DEF(parsed_result, parse_expr(new_ctx, std::move(*result)));
+    TRY_DEF(parsed_result, parse_expry(new_ctx, std::move(*result)));
     choices.push_back({
         .pattern = std::move(parsed_pattern),
         .result = *std::move(parsed_result),
@@ -319,7 +284,7 @@ std::expected<expr::Case, ParseError> parse_expr(Context &ctx, ast::expr::Case c
 
 std::expected<expr::TaggedValue, ParseError>
 parse_expr(Context &ctx, ast::expr::TaggedValue tagged_value) noexcept {
-  TRY_DEF(value, parse_expr(ctx, std::move(*tagged_value.value)));
+  TRY_DEF(value, parse_expry(ctx, std::move(*tagged_value.value)));
   return expr::TaggedValue{
       .tag_id = ctx.tags.get_tag(tagged_value.tag),
       .value = std::make_unique<expr::Expr>(*std::move(value)),
@@ -329,7 +294,7 @@ parse_expr(Context &ctx, ast::expr::TaggedValue tagged_value) noexcept {
 std::expected<expr::Pack, ParseError> parse_expr(Context &ctx, ast::expr::Pack pack) noexcept {
   move_only_vector<expr::TaggedValue> tagged_values;
   for (auto &tagged_value : pack.tagged_values) {
-    TRY_DEF(value, parse_expr(ctx, std::move(*tagged_value.value)));
+    TRY_DEF(value, parse_expry(ctx, std::move(*tagged_value.value)));
     tagged_values.push_back({
         .tag_id = ctx.tags.get_tag(tagged_value.tag),
         .value = std::make_unique<expr::Expr>(*std::move(value)),
@@ -343,7 +308,7 @@ std::expected<expr::Lambda, ParseError> parse_expr(Context &ctx,
   TRY_DEF(parsed_binding, parse_binding(ctx, std::move(lambda.binding)));
   auto binding = std::make_unique<entity::Binding>(*std::move(parsed_binding));
   auto new_ctx = ctx.with_binding(*binding);
-  TRY_DEF(body, parse_expr(new_ctx, std::move(*lambda.body)));
+  TRY_DEF(body, parse_expry(new_ctx, std::move(*lambda.body)));
   return expr::Lambda{
       // FIX: Unfinished.
       .captures = {},
@@ -355,8 +320,21 @@ std::expected<expr::Lambda, ParseError> parse_expr(Context &ctx,
 std::expected<expr::TVLambda, ParseError> parse_expr(Context &ctx,
                                                      ast::expr::TVLambda tv_lambda) noexcept {
   auto new_ctx = ctx.with_type_binding(tv_lambda.type_binding);
-  TRY_DEF(body, parse_expr(new_ctx, std::move(*tv_lambda.body)));
-  return expr::TVLambda{.body = std::make_unique<expr::Expr>(*std::move(body))};
+  TRY_DEF(body, parse_expry(new_ctx, std::move(*tv_lambda.body)));
+  return expr::TVLambda{
+      .binding_kind_id = convert(ctx.ts, tv_lambda.type_binding.kind),
+      .body = std::make_unique<expr::Expr>(*std::move(body)),
+  };
+}
+
+std::expected<expr::Instantiation, ParseError>
+parse_expr(Context &ctx, ast::expr::Instantiation instantiation) noexcept {
+  TRY_DEF(function, parse_expry(ctx, std::move(*instantiation.function)));
+  TRY_DEF(argument_id, typey::parse_typey(ctx, std::move(instantiation.argument)));
+  return expr::Instantiation{
+      .function = std::make_unique<expr::Expr>(*std::move(function)),
+      .argument_id = *argument_id,
+  };
 }
 
 std::expected<expr::Expr, ParseError> parse_expr(Context &ctx,
@@ -376,7 +354,7 @@ std::expected<expr::Expr, ParseError> parse_expr(Context &ctx,
   todo();
 }
 
-std::expected<expr::Expr, ParseError> parse_expr(Context &ctx, ast::expr::Expr expr) noexcept {
+std::expected<expr::Expr, ParseError> parse_expry(Context &ctx, ast::expr::Expr expr) noexcept {
   auto visitor = [&](auto an_expr) -> std::expected<expr::Expr, ParseError> {
     return parse_expr(ctx, std::move(an_expr));
   };
@@ -396,10 +374,13 @@ parse_type_definition(Context &ctx, ast::entity::TypeDefinition form) noexcept {
   }
 
   auto &prev = ctxs.empty() ? ctx : *ctxs.back();
-  TRY_DEF(parsed_type_id, typey::parse_basic_type(prev, std::move(form.type)));
+  TRY_DEF(parsed_type_id, typey::parse_typey(prev, std::move(form.type)));
   id::TypeId type_id = *parsed_type_id;
-  for (auto &_ : form.type_bindings) {
-    type_id = ctx.ts.store(type::TTLambda{type_id});
+  for (auto &type_binding : form.type_bindings) {
+    type_id = ctx.ts.store(type::TTLambda{
+        .binding_kind_id = convert(ctx.ts, type_binding.kind),
+        .type_id = type_id,
+    });
   }
 
   return entity::TypeDefinition{
@@ -412,7 +393,7 @@ std::expected<entity::ValueDefinition<expr::Expr>, ParseError>
 parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept {
   std::optional<id::TypeId> type_id;
   if (def.type) {
-    TRY_DEF(parsed_type_id, typey::parse_basic_type(ctx, *std::move(def.type)));
+    TRY_DEF(parsed_type_id, typey::parse_typey(ctx, *std::move(def.type)));
     type_id = *parsed_type_id;
   }
 
@@ -432,7 +413,7 @@ parse_value_definition(Context &ctx, ast::entity::ValueDefinition def) noexcept 
     };
   }
 
-  TRY_DEF(expr, expry::parse_expr(ctx, std::move(value)));
+  TRY_DEF(expr, expry::parse_expry(ctx, std::move(value)));
   return entity::ValueDefinition<expr::Expr>{
       .type_id = type_id,
       .name = static_cast<std::string>(def.name),
@@ -478,10 +459,7 @@ export std::expected<ResolvedAST, raw_parser::ParseError> parse(std::string_view
         kind_storage.push_back(std::make_unique<ast::kind::Kind>(infer_kind(form)));
         auto [_, did_insert] = names.insert({
             form.name,
-            scope::TypeDefinition{
-                .kind = kind_storage.back().get(),
-                .form_id = id::FormId{form_count++},
-            },
+            scope::TypeDefinition{.form_id = id::FormId{form_count++}},
         });
         if (not did_insert) {
           todo();

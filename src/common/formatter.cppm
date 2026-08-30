@@ -98,10 +98,13 @@ std::string type_name(TypeContext ctx, id::TypeId t) {
     }
     std::string operator()(type::TTLambda const &tt) { return "Π " + type_name(ctx, tt.type_id); }
     std::string operator()(type::Application const &app) {
-      return type_name(ctx, app.function_id) + " (" + type_name(ctx, app.argument_id) + ")";
+      return "(" + type_name(ctx, app.function_id) + ") (" + type_name(ctx, app.argument_id) + ")";
     }
     std::string operator()(type::Variable const &) {
       return "#" + std::to_string(ctx.ts.m_rep.representative(t).value);
+    }
+    std::string operator()(type::RigidVariable const &) {
+      return "!" + std::to_string(ctx.ts.m_rep.representative(t).value);
     }
     std::string operator()(type::NamedTypeReference const &a) {
       return ctx.forms[a.form_id.value].name;
@@ -148,13 +151,20 @@ void format_expr(std::ostream &os, Context ctx, std::size_t depth, expr::Expr co
       os << '}';
     }
     void operator()(expr::Lambda const &l) {
-      os << '|' << l.binding->name
+      os << "(|" << l.binding->name
          << " :: " << type_name({ctx.ts, ctx.forms, ctx.tags}, l.binding->type_id) << "| ";
       format_expr(os, ctx, 0, *l.body);
+      os << ')';
     }
     void operator()(expr::TVLambda const &l) {
       os << "Λ ";
       format_expr(os, ctx, 0, *l.body);
+    }
+    void operator()(expr::Instantiation const &l) {
+      format_expr(os, ctx, 0, *l.function);
+      os << "[:";
+      os << type_name({ctx.ts, ctx.forms, ctx.tags}, l.argument_id);
+      os << ":]";
     }
     void operator()(expr::ValueReference const &v) { os << ctx.values[v.value_id.value].name; }
     void operator()(expr::BindingReference const &b) { os << b.binding.get().name; }

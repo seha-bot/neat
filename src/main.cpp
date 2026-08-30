@@ -6,6 +6,7 @@
 #include <utility>
 
 import formatter;
+import kindchecker;
 import parser;
 import token;
 import typechecker;
@@ -55,6 +56,8 @@ int main(int argc, char *argv[]) {
         {resolved_ast->ts, resolved_ast->forms, resolved_ast->values, resolved_ast->tags}, value);
     std::cout << '\n';
   }
+
+  kindchecker::check(resolved_ast->ts, resolved_ast->forms);
 
   auto type_env = typechecker::typecheck(resolved_ast->ts, resolved_ast->tags, resolved_ast->forms,
                                          std::move(resolved_ast->values));
