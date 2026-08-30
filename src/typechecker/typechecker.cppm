@@ -21,7 +21,6 @@ import formatter;
 import id;
 import move_only_vector;
 import tag;
-import todo;
 import type;
 import type_storage;
 import typed_expr;
@@ -225,16 +224,18 @@ typecheck(type_storage::TypeStorage &ts, move_only_vector<tag::Tag> const &tags,
     auto typed_value = typecheck_value(ctx, std::move(value));
     ts.merge_into(var_id, *typed_value.type_id);
 
-    std::cout << typed_value.name << " : "
-              << formatter::type_name({ts, forms, tags}, *typed_value.type_id) << '\n';
+    std::cout << std::format("{} : {}\n", typed_value.name,
+                             formatter::TypeContext{{ts, forms, tags}, *typed_value.type_id});
     std::cout << "CONSTRAINTS:\n";
     solver.solve(
         std::cout,
-        [&](std::ostream &os, id::TypeId id) { os << formatter::type_name({ts, forms, tags}, id); },
+        [&](std::ostream &os, id::TypeId id) {
+          os << std::format("{}", formatter::TypeContext{{ts, forms, tags}, id});
+        },
         forms);
     std::cout << "DONE.\n";
-    std::cout << typed_value.name << " : "
-              << formatter::type_name({ts, forms, tags}, *typed_value.type_id) << "\n\n";
+    std::cout << std::format("{} : {}\n\n", typed_value.name,
+                             formatter::TypeContext{{ts, forms, tags}, *typed_value.type_id});
 
     typed_entities.push_back(std::move(typed_value));
   }

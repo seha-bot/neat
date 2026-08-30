@@ -45,16 +45,12 @@ int main(int argc, char *argv[]) {
     std::cerr << resolved_ast.error();
     return EXIT_FAILURE;
   }
+  formatter::Context const ctx{resolved_ast->ts, resolved_ast->forms, resolved_ast->tags};
   for (auto &form : resolved_ast->forms) {
-    formatter::format_form(std::cout, {resolved_ast->ts, resolved_ast->forms, resolved_ast->tags},
-                           form);
-    std::cout << '\n';
+    std::cout << formatter::format_form(ctx, form) << '\n';
   }
   for (auto &value : resolved_ast->values) {
-    formatter::format_value(
-        std::cout,
-        {resolved_ast->ts, resolved_ast->forms, resolved_ast->values, resolved_ast->tags}, value);
-    std::cout << '\n';
+    std::cout << formatter::format_value({ctx, resolved_ast->values}, value) << '\n';
   }
 
   kindchecker::check(resolved_ast->ts, resolved_ast->forms);
